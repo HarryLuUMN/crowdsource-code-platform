@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Write and run KnitScript in your browser." />
+    <title>KnitScript Studio</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-actions">
+        <span class="compiler-state" id="compilerState"><i></i> Compiler ready</span>
+        <button class="ghost-button" id="resetButton" type="button">Reset example</button>
+        <button class="run-button" id="runButton" type="button">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 8 6-8 6V4Z" /></svg>
+          <span>Run</span>
+          <kbd>⌘ ↵</kbd>
+        </button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="studio" aria-label="KnitScript editor">
+        <div class="panel editor-panel">
+          <div class="panel-heading">
+            <div class="file-tab"><span class="file-dot"></span>swatch.ks</div>
+            <span class="save-state" id="saveState">Saved locally</span>
+          </div>
+          <div class="editor-shell">
+            <pre class="line-numbers" id="lineNumbers" aria-hidden="true">1</pre>
+            <textarea
+              id="sourceEditor"
+              aria-label="KnitScript source code"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+            ></textarea>
+          </div>
+          <div class="panel-footer">
+            <span id="cursorPosition">Ln 1, Col 1</span>
+            <span>KnitScript</span>
+            <span>UTF-8</span>
+          </div>
+        </div>
+
+        <div class="panel result-panel">
+          <div class="result-heading">
+            <div class="tabs" role="tablist" aria-label="Run output">
+              <button class="tab active" data-tab="console" role="tab" aria-selected="true">Console</button>
+              <button class="tab" data-tab="knitout" role="tab" aria-selected="false">Knitout</button>
+            </div>
+            <button class="copy-button" id="copyButton" type="button" hidden>Copy output</button>
+          </div>
+
+          <div class="result-body">
+            <div class="empty-state" id="emptyState">
+              <span class="loop-illustration" aria-hidden="true">
+                <svg viewBox="0 0 120 92">
+                  <path d="M16 72c12-36 26-50 42-42 10 5 7 17-2 21-16 8-25-21-7-30 22-11 42 11 37 32-5 22-29 29-50 17" />
+                  <path d="M78 66c8-17 18-25 29-21" />
+                </svg>
+              </span>
+              <h2>Ready when you are</h2>
+              <p>Run your program to see compiler messages and generated knitout here.</p>
+            </div>
+
+            <div class="result-content" id="resultContent" hidden>
+              <div class="run-summary" id="runSummary"></div>
+              <pre class="output" id="consoleOutput"></pre>
+              <pre class="output" id="knitoutOutput" hidden></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
