@@ -19,7 +19,7 @@ def _apply_resource_limits() -> None:
     try:
         import resource
 
-        resource.setrlimit(resource.RLIMIT_CPU, (8, 8))
+        resource.setrlimit(resource.RLIMIT_CPU, (20, 20))
         resource.setrlimit(resource.RLIMIT_FSIZE, (2 * 1024 * 1024, 2 * 1024 * 1024))
         resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
     except (ImportError, OSError, ValueError):

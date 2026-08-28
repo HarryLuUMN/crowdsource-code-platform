@@ -1,0 +1,8 @@
+.git
+.venv
+.omx
+AGENTS.md
+data
+__pycache__
+*.py[cod]
+.DS_Store

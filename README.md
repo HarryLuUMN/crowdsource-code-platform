@@ -51,6 +51,19 @@ This filesystem format is intentionally object-storage friendly: each event batc
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
+## Deploy on Railway
+
+The repository includes a Docker image and Railway health-check configuration. Deploy the repository as one Railway service, attach a volume at `/data`, and expose the generated Railway domain. Runtime traces are written to `/data/traces` through `TRACE_STORAGE_DIR`.
+
+Required service settings:
+
+```text
+Volume mount path: /data
+Health check: /api/health
+```
+
+Railway supplies the public `PORT` automatically. The container binds to `0.0.0.0` so the editor, compiler API, and trace store are available from the same origin.
+
 ## Current safety boundary
 
 Compilation runs in a temporary subprocess with time, file-size, and file-descriptor limits. This is appropriate for local development and controlled testing. Before accepting untrusted public submissions, move `compiler_worker.py` into a dedicated sandbox such as Modal Sandbox, gVisor, or Firecracker and disable outbound networking.
