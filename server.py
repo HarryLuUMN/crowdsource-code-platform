@@ -13,7 +13,7 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from answer_checker import TASK_ID, check_stockinette_answer
 from trace_store import TraceStore, utc_now
@@ -106,9 +106,13 @@ def evaluate_source(source: str) -> tuple[int, dict[str, Any]]:
 def build_study_config(completion_url: str | None = None) -> dict[str, Any]:
     candidate = (completion_url if completion_url is not None else os.environ.get("PROLIFIC_COMPLETION_URL", "")).strip()
     parsed = urlparse(candidate)
+    completion_codes = parse_qs(parsed.query).get("cc", [])
     valid_completion_url = (
         candidate
-        if parsed.scheme == "https" and parsed.hostname == "app.prolific.com" and parsed.path.startswith("/submissions/complete")
+        if parsed.scheme == "https"
+        and parsed.hostname == "app.prolific.com"
+        and parsed.path.rstrip("/") == "/submissions/complete"
+        and any(completion_codes)
         else None
     )
     return {
@@ -222,6 +226,12 @@ class KnitScriptHandler(SimpleHTTPRequestHandler):
                 self._send_json(
                     HTTPStatus.BAD_REQUEST,
                     {"ok": False, "error": {"message": "A study session is required before submitting."}},
+                )
+                return
+            if is_submission and not isinstance(source, str):
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"ok": False, "error": {"message": "source must be a string"}},
                 )
                 return
             requested_at = utc_now()

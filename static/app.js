@@ -1,24 +1,23 @@
-const EXAMPLE_SOURCE = `// A small stockinette swatch
+const TASK_ID = "stockinette-swatch-v1";
+const queryParameters = new URLSearchParams(window.location.search);
+const prolificRecruitment = {
+  source: "prolific",
+  prolific_pid: queryParameters.get("PROLIFIC_PID") || "",
+  study_id: queryParameters.get("STUDY_ID") || "",
+  prolific_session_id: queryParameters.get("SESSION_ID") || "",
+};
+const hasProlificParticipant = Boolean(prolificRecruitment.prolific_pid);
+const sourceStorageScope = prolificRecruitment.prolific_session_id || prolificRecruitment.prolific_pid || "direct";
+const SOURCE_STORAGE_KEY = `knitscript-studio-source:${TASK_ID}:${sourceStorageScope}`;
+const STARTER_SOURCE = `// Complete the stockinette swatch task.
 pattern_width = 10;
 pattern_height = 6;
 c = 1;
 
 with Carrier as c:{
-  in Leftward direction:{
-    tuck Front_Needles[1:pattern_width:2];
-  }
-  in reverse direction:{
-    tuck Front_Needles[0:pattern_width:2];
-  }
-
-  // Secure the cast-on before releasing the yarn hook.
-  in reverse direction:{ knit Loops; }
-  in reverse direction:{ knit Loops; }
-  releasehook;
-
-  for row in range(pattern_height):{
-    in reverse direction:{ knit Loops; }
-  }
+  // TODO: cast on 10 stitches on the front bed.
+  // TODO: knit 2 securing rows, then call releasehook.
+  // TODO: knit 6 more rows, alternating direction each row.
 }`;
 
 const editor = document.querySelector("#sourceEditor");
@@ -26,18 +25,25 @@ const lineNumbers = document.querySelector("#lineNumbers");
 const cursorPosition = document.querySelector("#cursorPosition");
 const saveState = document.querySelector("#saveState");
 const runButton = document.querySelector("#runButton");
+const submitButton = document.querySelector("#submitButton");
 const resetButton = document.querySelector("#resetButton");
 const compilerState = document.querySelector("#compilerState");
+const studyState = document.querySelector("#studyState");
 const emptyState = document.querySelector("#emptyState");
 const resultContent = document.querySelector("#resultContent");
 const runSummary = document.querySelector("#runSummary");
+const testOutput = document.querySelector("#testOutput");
 const consoleOutput = document.querySelector("#consoleOutput");
 const knitoutOutput = document.querySelector("#knitoutOutput");
 const copyButton = document.querySelector("#copyButton");
 const toast = document.querySelector("#toast");
+const completionDialog = document.querySelector("#completionDialog");
+const completionMessage = document.querySelector("#completionMessage");
+const closeCompletionButton = document.querySelector("#closeCompletionButton");
+const prolificCompletionLink = document.querySelector("#prolificCompletionLink");
 const tabs = [...document.querySelectorAll(".tab")];
 
-let activeTab = "console";
+let activeTab = "tests";
 let saveTimer;
 let toastTimer;
 let previousSource = "";
@@ -48,7 +54,7 @@ let telemetryInFlightBatch = null;
 let sessionReady;
 const pendingEvents = [];
 const telemetryStartedAt = performance.now();
-const participantId = getPersistentId("knitscript-participant-id");
+const participantId = prolificRecruitment.prolific_pid || getPersistentId("knitscript-participant-id");
 const clientInstanceId = crypto.randomUUID();
 
 function getPersistentId(key) {
@@ -79,8 +85,9 @@ async function initializeTelemetrySession() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         participant_id: participantId,
-        task_id: "playground",
+        task_id: TASK_ID,
         initial_source: editor.value,
+        recruitment: hasProlificParticipant ? prolificRecruitment : { source: "direct" },
         client: {
           client_instance_id: clientInstanceId,
           locale: navigator.language,
@@ -169,7 +176,7 @@ function eventTypeForInput(inputType = "") {
 }
 
 function setInitialSource() {
-  editor.value = localStorage.getItem("knitscript-studio-source") || EXAMPLE_SOURCE;
+  editor.value = localStorage.getItem(SOURCE_STORAGE_KEY) || STARTER_SOURCE;
   updateEditorChrome();
 }
 
@@ -195,7 +202,7 @@ function persistSource() {
   saveState.textContent = "Saving…";
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    localStorage.setItem("knitscript-studio-source", editor.value);
+    localStorage.setItem(SOURCE_STORAGE_KEY, editor.value);
     saveState.textContent = "Saved locally";
   }, 350);
 }
@@ -207,6 +214,12 @@ function showToast(message) {
   toastTimer = setTimeout(() => toast.classList.remove("visible"), 1800);
 }
 
+function clearToast() {
+  clearTimeout(toastTimer);
+  toast.classList.remove("visible");
+  toast.textContent = "";
+}
+
 function selectTab(name, logInteraction = false) {
   activeTab = name;
   tabs.forEach((tab) => {
@@ -214,20 +227,45 @@ function selectTab(name, logInteraction = false) {
     tab.classList.toggle("active", selected);
     tab.setAttribute("aria-selected", String(selected));
   });
+  testOutput.hidden = name !== "tests";
   consoleOutput.hidden = name !== "console";
   knitoutOutput.hidden = name !== "knitout";
   copyButton.hidden = name !== "knitout" || !knitoutOutput.textContent;
   if (logInteraction) recordEvent(`output.${name}_viewed`);
 }
 
+function renderCheck(check) {
+  if (!check || !Array.isArray(check.tests)) {
+    testOutput.innerHTML = "";
+    return;
+  }
+  testOutput.innerHTML = check.tests
+    .map(
+      (test) => `
+        <article class="test-case ${test.passed ? "passed" : "failed"}">
+          <span class="test-marker" aria-hidden="true">${test.passed ? "✓" : "×"}</span>
+          <div>
+            <h3>${escapeHtml(test.label)}</h3>
+            <p>${escapeHtml(test.message)}</p>
+          </div>
+        </article>`,
+    )
+    .join("");
+}
+
 function showResult(result) {
   emptyState.hidden = true;
   resultContent.hidden = false;
+  const check = result.check;
+  const checkPill = check
+    ? `<span class="summary-pill ${check.passed ? "success" : "error"}">${check.passed_count}/${check.total_count} tests passed</span>`
+    : "";
 
   if (result.ok) {
     const metrics = result.metrics || {};
     runSummary.innerHTML = [
       `<span class="summary-pill success">✓ Compiled</span>`,
+      checkPill,
       `<span class="summary-pill">${result.duration_ms ?? 0} ms</span>`,
       `<span class="summary-pill">${metrics.loops ?? 0} loops</span>`,
       `<span class="summary-pill">${metrics.stitches ?? 0} stitches</span>`,
@@ -237,11 +275,11 @@ function showResult(result) {
     consoleOutput.textContent = messages || "Compilation completed without messages.";
     consoleOutput.classList.remove("error");
     knitoutOutput.textContent = result.knitout || "";
-    selectTab("knitout");
   } else {
     const error = result.error || {};
     runSummary.innerHTML = [
       `<span class="summary-pill error">× Compile failed</span>`,
+      checkPill,
       result.duration_ms == null ? "" : `<span class="summary-pill">${result.duration_ms} ms</span>`,
       error.type ? `<span class="summary-pill">${escapeHtml(error.type)}</span>` : "",
     ].join("");
@@ -250,8 +288,9 @@ function showResult(result) {
       .join("\n\n");
     consoleOutput.classList.add("error");
     knitoutOutput.textContent = "";
-    selectTab("console");
   }
+  renderCheck(check);
+  selectTab(check ? "tests" : "console");
 }
 
 function escapeHtml(value) {
@@ -263,16 +302,35 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-async function runSource(trigger = "button") {
-  if (runButton.disabled) return;
+function showCompletion(result) {
+  const completionUrl = result.completion_url;
+  prolificCompletionLink.hidden = !completionUrl;
+  if (completionUrl) {
+    prolificCompletionLink.href = completionUrl;
+    completionMessage.textContent = "Your solution and programming trace are saved. Return to Prolific to finish the study.";
+    closeCompletionButton.textContent = "Stay here";
+  } else {
+    prolificCompletionLink.removeAttribute("href");
+    completionMessage.textContent = "Your solution and programming trace are saved. This preview has no Prolific completion URL configured yet.";
+    closeCompletionButton.textContent = "Close";
+  }
+  completionDialog.showModal();
+}
+
+async function executeSource(mode, trigger = "button") {
+  if (runButton.disabled || submitButton.disabled) return;
+  clearToast();
+  const isSubmission = mode === "submit";
+  const activeButton = isSubmission ? submitButton : runButton;
   runButton.disabled = true;
-  runButton.querySelector("span").textContent = "Running…";
-  compilerState.innerHTML = "<i></i> Compiling";
+  submitButton.disabled = true;
+  activeButton.querySelector("span").textContent = isSubmission ? "Submitting…" : "Running…";
+  compilerState.innerHTML = `<i></i> ${isSubmission ? "Checking submission" : "Running tests"}`;
   try {
     await sessionReady;
-    recordEvent("compile.requested", { trigger, source_length: editor.value.length });
+    recordEvent(`${mode}.requested`, { trigger, source_length: editor.value.length });
     await flushEvents();
-    const response = await fetch("/api/run", {
+    const response = await fetch(isSubmission ? "/api/submit" : "/api/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ source: editor.value, session_id: telemetrySessionId }),
@@ -280,20 +338,26 @@ async function runSource(trigger = "button") {
     const result = await response.json();
     showResult(result);
     if (result.trace_saved === false) showToast("Compiled, but the trace could not be saved");
-    recordEvent(result.ok ? "compile.completed" : "compile.failed", {
+    const eventOutcome = isSubmission && result.submission?.passed ? "accepted" : result.ok ? "completed" : "failed";
+    recordEvent(`${mode}.${eventOutcome}`, {
       execution_id: result.execution_id || null,
       code_state_id: result.code_state_id || null,
+      submission_id: result.submission?.submission_id || null,
       duration_ms: result.duration_ms ?? null,
       error_type: result.error?.type || null,
       metrics: result.metrics || null,
+      check: result.check || null,
     });
+    if (isSubmission && result.submission?.passed) showCompletion(result);
+    if (isSubmission && result.submission && !result.submission.passed) showToast("Not accepted yet — review the failed tests");
     void flushEvents();
   } catch (error) {
     showResult({ ok: false, error: { type: "ConnectionError", message: "Could not reach the compiler backend." } });
-    recordEvent("compile.connection_error");
+    recordEvent(`${mode}.connection_error`);
   } finally {
     runButton.disabled = false;
-    runButton.querySelector("span").textContent = "Run";
+    submitButton.disabled = false;
+    activeButton.querySelector("span").textContent = isSubmission ? "Submit" : "Run";
     compilerState.innerHTML = "<i></i> Compiler ready";
   }
 }
@@ -320,19 +384,20 @@ editor.addEventListener("keydown", (event) => {
   }
   if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
     event.preventDefault();
-    runSource("shortcut");
+    executeSource("run", "shortcut");
   }
 });
 
-runButton.addEventListener("click", () => runSource("button"));
+runButton.addEventListener("click", () => executeSource("run", "button"));
+submitButton.addEventListener("click", () => executeSource("submit", "button"));
 resetButton.addEventListener("click", () => {
   const previousLength = editor.value.length;
-  editor.value = EXAMPLE_SOURCE;
-  previousSource = EXAMPLE_SOURCE;
-  localStorage.setItem("knitscript-studio-source", EXAMPLE_SOURCE);
+  editor.value = STARTER_SOURCE;
+  previousSource = STARTER_SOURCE;
+  localStorage.setItem(SOURCE_STORAGE_KEY, STARTER_SOURCE);
   updateEditorChrome();
-  recordEvent("file.reset", { previous_length: previousLength, source_length_after: EXAMPLE_SOURCE.length });
-  showToast("Example restored");
+  recordEvent("file.reset", { previous_length: previousLength, source_length_after: STARTER_SOURCE.length });
+  showToast("Starter restored");
   editor.focus();
 });
 copyButton.addEventListener("click", async () => {
@@ -341,6 +406,7 @@ copyButton.addEventListener("click", async () => {
   showToast("Knitout copied");
 });
 tabs.forEach((tab) => tab.addEventListener("click", () => selectTab(tab.dataset.tab, true)));
+closeCompletionButton.addEventListener("click", () => completionDialog.close());
 
 document.addEventListener("visibilitychange", () => {
   recordEvent(document.hidden ? "page.hidden" : "page.visible");
@@ -372,6 +438,7 @@ fetch("/api/health")
     compilerState.innerHTML = "<i></i> Compiler offline";
   });
 
+studyState.textContent = hasProlificParticipant ? "Prolific session" : "Preview mode";
 setInitialSource();
 previousSource = editor.value;
 sessionReady = initializeTelemetrySession();

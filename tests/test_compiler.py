@@ -74,11 +74,13 @@ with Carrier as 1:{
     def test_study_config_only_accepts_official_prolific_completion_urls(self) -> None:
         configured = build_study_config("https://app.prolific.com/submissions/complete?cc=ABC123")
         rejected = build_study_config("https://example.com/complete?cc=ABC123")
+        missing_code = build_study_config("https://app.prolific.com/submissions/complete")
 
         self.assertTrue(configured["prolific"]["configured"])
         self.assertEqual("https://app.prolific.com/submissions/complete?cc=ABC123", configured["prolific"]["completion_url"])
         self.assertFalse(rejected["prolific"]["configured"])
         self.assertIsNone(rejected["prolific"]["completion_url"])
+        self.assertFalse(missing_code["prolific"]["configured"])
 
 
 if __name__ == "__main__":

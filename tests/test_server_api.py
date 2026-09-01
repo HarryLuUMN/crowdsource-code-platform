@@ -7,6 +7,7 @@ import threading
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from unittest.mock import patch
 
@@ -39,8 +40,11 @@ class ServerApiTests(unittest.TestCase):
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urlopen(request) as response:
-            return response.status, json.loads(response.read())
+        try:
+            with urlopen(request) as response:
+                return response.status, json.loads(response.read())
+        except HTTPError as error:
+            return error.code, json.loads(error.read())
 
     def test_correct_submission_is_rechecked_saved_and_given_completion_url(self) -> None:
         _status, session_result = self.post_json(
@@ -103,6 +107,24 @@ class ServerApiTests(unittest.TestCase):
         self.assertFalse(result["check"]["passed"])
         self.assertFalse(result["submission"]["passed"])
         self.assertNotIn("completion_url", result)
+
+    def test_submission_rejects_a_missing_source_as_a_bad_request(self) -> None:
+        _status, session_result = self.post_json(
+            "/api/sessions",
+            {
+                "participant_id": "participant-test",
+                "task_id": "stockinette-swatch-v1",
+                "initial_source": "starter",
+            },
+        )
+
+        status, result = self.post_json(
+            "/api/submit",
+            {"session_id": session_result["session"]["session_id"]},
+        )
+
+        self.assertEqual(400, status)
+        self.assertFalse(result["ok"])
 
 
 if __name__ == "__main__":

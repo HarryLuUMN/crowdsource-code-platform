@@ -60,9 +60,16 @@ def check_stockinette_answer(compile_result: dict[str, Any]) -> dict[str, Any]:
     cast_on_operations = [
         operation for operation in before_first_knit if operation[0] == "tuck" and len(operation) >= 3
     ]
+    all_tuck_operations = [
+        operation for operation in operations if operation[0] == "tuck" and len(operation) >= 3
+    ]
     cast_on_needles = {operation[2] for operation in cast_on_operations}
     securing_rows = _knit_rows(before_release)
     stockinette_rows = _knit_rows(after_release)
+    only_expected_operations = all(
+        operation[0] in {"inhook", "tuck", "knit", "releasehook", "outhook"}
+        for operation in operations
+    )
     alternating_directions = all(
         stockinette_rows[index][0][1] != stockinette_rows[index - 1][0][1]
         for index in range(1, len(stockinette_rows))
@@ -86,7 +93,10 @@ def check_stockinette_answer(compile_result: dict[str, Any]) -> dict[str, Any]:
         _result(
             "cast-on",
             "Casts on all 10 stitches",
-            compiled and cast_on_needles == EXPECTED_NEEDLES and len(cast_on_operations) == 10,
+            compiled
+            and cast_on_needles == EXPECTED_NEEDLES
+            and len(cast_on_operations) == 10
+            and len(all_tuck_operations) == 10,
             "The tuck cast-on covers all 10 needles once.",
             "Before the first knit, tuck once on each front needle from 0 through 9.",
         ),
@@ -103,7 +113,8 @@ def check_stockinette_answer(compile_result: dict[str, Any]) -> dict[str, Any]:
             compiled
             and len(stockinette_rows) == 6
             and all(_is_full_front_row(row) for row in stockinette_rows)
-            and alternating_directions,
+            and alternating_directions
+            and only_expected_operations,
             "Six complete alternating rows follow releasehook.",
             "After releasehook, knit exactly 6 complete rows and alternate direction each row.",
         ),

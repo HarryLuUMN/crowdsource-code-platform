@@ -6,27 +6,38 @@
     <meta name="description" content="Write and run KnitScript in your browser." />
     <title>KnitScript Studio</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=2" />
+    <link rel="stylesheet" href="/styles.css?v=3" />
   </head>
   <body>
     <header class="topbar">
       <div class="topbar-actions">
         <span class="compiler-state" id="compilerState"><i></i> Compiler ready</span>
-        <button class="ghost-button" id="resetButton" type="button">Reset example</button>
+        <span class="study-state" id="studyState">Preview mode</span>
+        <button class="ghost-button" id="resetButton" type="button">Reset starter</button>
         <button class="run-button" id="runButton" type="button">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 8 6-8 6V4Z" /></svg>
           <span>Run</span>
           <kbd>⌘ ↵</kbd>
+        </button>
+        <button class="submit-button" id="submitButton" type="button">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-8" /></svg>
+          <span>Submit</span>
         </button>
       </div>
     </header>
 
     <main class="workspace">
       <section class="task-panel" aria-labelledby="taskTitle">
-        <div class="task-label">Task</div>
+        <div class="task-label">Task 01</div>
         <div class="task-copy">
-          <h1 id="taskTitle">Create a stockinette swatch</h1>
-          <p>Write a program that casts on 10 stitches, secures the yarn, and knits 6 stockinette rows. Run your code and use the compiler output to fix any errors.</p>
+          <h1 id="taskTitle">Complete a stockinette swatch</h1>
+          <p>Finish the starter code so the machine creates the required swatch. Run your code to check each requirement, then submit when all tests pass.</p>
+          <div class="task-requirements" aria-label="Task requirements">
+            <span>10 front-bed needles</span>
+            <span>2 securing rows</span>
+            <span>releasehook</span>
+            <span>6 alternating rows</span>
+          </div>
         </div>
       </section>
 
@@ -56,7 +67,8 @@
         <div class="panel result-panel">
           <div class="result-heading">
             <div class="tabs" role="tablist" aria-label="Run output">
-              <button class="tab active" data-tab="console" role="tab" aria-selected="true">Console</button>
+              <button class="tab active" data-tab="tests" role="tab" aria-selected="true">Test Results</button>
+              <button class="tab" data-tab="console" role="tab" aria-selected="false">Console</button>
               <button class="tab" data-tab="knitout" role="tab" aria-selected="false">Knitout</button>
             </div>
             <button class="copy-button" id="copyButton" type="button" hidden>Copy output</button>
@@ -70,13 +82,14 @@
                   <path d="M78 66c8-17 18-25 29-21" />
                 </svg>
               </span>
-              <h2>Ready when you are</h2>
-              <p>Run your program to see compiler messages and generated knitout here.</p>
+              <h2>Run your code against the task</h2>
+              <p>You will see a result for each requirement here before submitting.</p>
             </div>
 
             <div class="result-content" id="resultContent" hidden>
               <div class="run-summary" id="runSummary"></div>
-              <pre class="output" id="consoleOutput"></pre>
+              <div class="test-output" id="testOutput"></div>
+              <pre class="output" id="consoleOutput" hidden></pre>
               <pre class="output" id="knitoutOutput" hidden></pre>
             </div>
           </div>
@@ -85,6 +98,15 @@
     </main>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js" defer></script>
+    <dialog class="completion-dialog" id="completionDialog" aria-labelledby="completionTitle">
+      <div class="completion-icon" aria-hidden="true">✓</div>
+      <h2 id="completionTitle">Solution accepted</h2>
+      <p id="completionMessage">Your submission and programming trace have been saved.</p>
+      <div class="completion-actions">
+        <button class="ghost-button" id="closeCompletionButton" type="button">Close</button>
+        <a class="submit-button completion-link" id="prolificCompletionLink" hidden>Return to Prolific</a>
+      </div>
+    </dialog>
+    <script src="/app.js?v=3" defer></script>
   </body>
 </html>

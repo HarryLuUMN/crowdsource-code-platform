@@ -26,16 +26,19 @@ data/traces/<session-id>/
 │   ├── source-initial.ks
 │   ├── source-final.ks
 │   └── <source-sha256>.ks
-└── executions/<execution-id>/
-    ├── source.ks
-    ├── result.json
-    ├── output.k
-    ├── error.k
-    ├── stdout.txt
-    └── stderr.txt
+├── executions/<execution-id>/
+│   ├── source.ks
+│   ├── result.json
+│   ├── output.k
+│   ├── error.k
+│   ├── stdout.txt
+│   └── stderr.txt
+└── submissions/<submission-id>.json
 ```
 
 The event stream records semantic edits (inserted/deleted text and offsets), paste, undo/redo, reset, run requests, compiler outcomes, output views, visibility changes, and session timing. Compiler bundles include the exact source, full knitout or partial error knitout, diagnostics, logs, metrics, duration, exit code, and toolchain versions.
+
+Final Submit attempts are recompiled and checked on the server. Each attempt preserves its semantic test results and links back to the immutable compiler execution. Passing submissions also mark the session manifest with `passed_submission_id` and `passed_at`.
 
 Set `TRACE_STORAGE_DIR` to place traces on a mounted persistent volume:
 
@@ -63,6 +66,16 @@ Health check: /api/health
 ```
 
 Railway supplies the public `PORT` automatically. The container binds to `0.0.0.0` so the editor, compiler API, and trace store are available from the same origin.
+
+## Launch through Prolific
+
+The app accepts Prolific's `PROLIFIC_PID`, `STUDY_ID`, and `SESSION_ID` URL parameters and saves them with the trace. Set the study-specific Railway variable below so a passing submission can return the participant to Prolific:
+
+```text
+PROLIFIC_COMPLETION_URL=https://app.prolific.com/submissions/complete?cc=YOUR_CODE
+```
+
+See [PROLIFIC_SETUP.md](PROLIFIC_SETUP.md) for the external study URL, completion-path setup, task definition, and pilot checklist.
 
 ## Current safety boundary
 
