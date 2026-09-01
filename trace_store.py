@@ -13,8 +13,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_CODE_EVENT_TYPES = {"editor.edit", "editor.paste", "editor.undo", "editor.redo", "file.reset"}
+_OBSERVATION_MARKERS = {
+    "guide.task_viewed": ("READ_TASK", "READ_TASK"),
+    "guide.tutorial_viewed": ("READ_DOC", "READ_DOCUMENTATION"),
+    "guide.documentation_opened": ("READ_DOC", "READ_DOCUMENTATION"),
+    "run.requested": ("BROWSER_TEST", "BROWSER_TESTING"),
+    "submit.requested": ("BROWSER_TEST", "BROWSER_TESTING"),
+}
 
 
 def utc_now() -> str:
@@ -44,6 +52,69 @@ def _write_text_atomic(path: Path, value: str) -> None:
     os.replace(temp_path, path)
 
 
+def _write_jsonl_atomic(path: Path, values: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as temp_file:
+        for value in values:
+            temp_file.write(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+            temp_file.write("\n")
+        temp_path = Path(temp_file.name)
+    os.replace(temp_path, path)
+
+
+def _utf16_length(value: str) -> int:
+    return len(value.encode("utf-16-le", errors="surrogatepass")) // 2
+
+
+def _apply_edit(source: str, payload: dict[str, Any]) -> str | None:
+    start = payload.get("range_start")
+    end = payload.get("range_end")
+    inserted_text = payload.get("inserted_text")
+    deleted_text = payload.get("deleted_text")
+    if not isinstance(start, int) or not isinstance(end, int) or start < 0 or end < start:
+        return None
+    if not isinstance(inserted_text, str) or not isinstance(deleted_text, str):
+        return None
+
+    encoded_source = source.encode("utf-16-le", errors="surrogatepass")
+    start_byte = start * 2
+    end_byte = end * 2
+    if end_byte > len(encoded_source):
+        return None
+    removed = encoded_source[start_byte:end_byte].decode("utf-16-le", errors="surrogatepass")
+    if removed != deleted_text:
+        return None
+    encoded_result = (
+        encoded_source[:start_byte]
+        + inserted_text.encode("utf-16-le", errors="surrogatepass")
+        + encoded_source[end_byte:]
+    )
+    result = encoded_result.decode("utf-16-le", errors="surrogatepass")
+    expected_length = payload.get("source_length_after")
+    if isinstance(expected_length, int) and _utf16_length(result) != expected_length:
+        return None
+    return result
+
+
+def _code_event_label(event_type: str, payload: dict[str, Any]) -> str:
+    fixed_labels = {
+        "editor.paste": "PASTE_CODE",
+        "editor.undo": "UNDO_CODE",
+        "editor.redo": "REDO_CODE",
+        "file.reset": "RESET_CODE",
+    }
+    if event_type in fixed_labels:
+        return fixed_labels[event_type]
+    operation = payload.get("operation")
+    if operation == "insert":
+        return "INSERT_CODE"
+    if operation == "delete":
+        return "DELETE_CODE"
+    if operation == "replace":
+        return "REPLACE_CODE"
+    return "EDIT_CODE"
+
+
 class TraceStore:
     """Persist replayable session traces without requiring a database."""
 
@@ -67,23 +138,136 @@ class TraceStore:
         return json.loads(path.read_text(encoding="utf-8"))
 
     @staticmethod
-    def _event_state(session_dir: Path) -> tuple[dict[int, str | None], int]:
-        """Return stored event sequences and the largest gap-free sequence."""
-        sequences: dict[int, str | None] = {}
+    def _stored_events(session_dir: Path) -> dict[int, dict[str, Any]]:
+        events: dict[int, dict[str, Any]] = {}
         for batch_path in (session_dir / "events").glob("*.jsonl"):
             for line in batch_path.read_text(encoding="utf-8").splitlines():
                 event = json.loads(line)
                 seq = event.get("seq")
                 if not isinstance(seq, int) or seq < 1:
                     raise ValueError(f"Invalid event sequence in {batch_path.name}")
-                if seq in sequences:
+                if seq in events:
                     raise ValueError(f"Duplicate stored event sequence {seq}")
-                sequences[seq] = event.get("client_event_id")
+                events[seq] = event
+        return events
+
+    @staticmethod
+    def _event_state(session_dir: Path) -> tuple[dict[int, str | None], int]:
+        """Return stored event sequences and the largest gap-free sequence."""
+        sequences = {
+            seq: event.get("client_event_id") for seq, event in TraceStore._stored_events(session_dir).items()
+        }
 
         last_contiguous_seq = 0
         while last_contiguous_seq + 1 in sequences:
             last_contiguous_seq += 1
         return sequences, last_contiguous_seq
+
+    @staticmethod
+    def _same_client_event(stored: dict[str, Any], incoming: dict[str, Any]) -> bool:
+        stored_id = stored.get("client_event_id")
+        incoming_id = incoming.get("client_event_id")
+        if isinstance(stored_id, str) and stored_id and isinstance(incoming_id, str) and incoming_id:
+            return stored_id == incoming_id
+        comparable_fields = ("seq", "type", "client_timestamp", "elapsed_ms", "payload")
+        return all(stored.get(field) == incoming.get(field) for field in comparable_fields)
+
+    @staticmethod
+    def _materialize_delta_observations(
+        session_dir: Path,
+        manifest: dict[str, Any],
+        events: dict[int, dict[str, Any]],
+    ) -> None:
+        observations_dir = session_dir / "delta-observations"
+        observations_dir.mkdir(exist_ok=True)
+        labels_path = observations_dir / "step_labels.jsonl"
+        labels = (
+            [json.loads(line) for line in labels_path.read_text(encoding="utf-8").splitlines()]
+            if labels_path.is_file()
+            else []
+        )
+        last_contiguous_seq = 0
+        while last_contiguous_seq + 1 in events:
+            last_contiguous_seq += 1
+        materialized_seq = int(manifest.get("observation_last_seq", 0))
+        if materialized_seq > last_contiguous_seq:
+            raise ValueError("Observation sequence is ahead of stored events")
+
+        code_state_id = manifest.get("observation_code_state_id") or manifest.get("initial_code_state_id")
+        if isinstance(code_state_id, str) and code_state_id.startswith("sha256:"):
+            code_state_path = session_dir / "code" / f"{code_state_id[7:]}.ks"
+            source = code_state_path.read_text(encoding="utf-8") if code_state_path.is_file() else ""
+        else:
+            initial_path = session_dir / "code" / "source-initial.ks"
+            source = initial_path.read_text(encoding="utf-8") if initial_path.is_file() else ""
+        code_changed = False
+        step = len(labels)
+
+        for seq in range(materialized_seq + 1, last_contiguous_seq + 1):
+            event = events[seq]
+            event_type = event.get("type")
+            content = None
+            primary_label = None
+            step_code_state_id = None
+
+            if event_type in _CODE_EVENT_TYPES:
+                payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+                if event_type == "file.reset":
+                    source_after = payload.get("source_after")
+                    if isinstance(source_after, str):
+                        source = source_after
+                    elif payload.get("source_length_after") == 0:
+                        source = ""
+                    else:
+                        source_after = None
+                else:
+                    source_after = _apply_edit(source, payload)
+                    if source_after is not None:
+                        source = source_after
+
+                if source_after is None:
+                    content = "UNREPLAYABLE_CODE_EDIT\n"
+                    primary_label = "CODE_EDIT_UNREPLAYABLE"
+                else:
+                    source_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
+                    step_code_state_id = f"sha256:{source_hash}"
+                    code_state_path = session_dir / "code" / f"{source_hash}.ks"
+                    if not code_state_path.exists():
+                        _write_text_atomic(code_state_path, source)
+                    code_state_id = step_code_state_id
+                    code_changed = True
+                    content = source
+                    primary_label = _code_event_label(event_type, payload)
+            elif event_type in _OBSERVATION_MARKERS:
+                primary_label, marker = _OBSERVATION_MARKERS[event_type]
+                content = f"{marker}\n"
+
+            if content is not None and primary_label is not None:
+                filename = f"delta-session1-step{step}.txt"
+                _write_text_atomic(observations_dir / filename, content)
+                label = {
+                    "step": step,
+                    "file": filename,
+                    "primaryLabel": primary_label,
+                    "labels": [primary_label],
+                    "sourceEventType": event_type,
+                    "eventSeq": seq,
+                    "clientTimestamp": event.get("client_timestamp"),
+                    "elapsedMs": event.get("elapsed_ms"),
+                    "note": f"Captured from {event_type}; domain-specific intent can be annotated offline.",
+                }
+                if step_code_state_id is not None:
+                    label["codeStateId"] = step_code_state_id
+                labels.append(label)
+                step += 1
+
+        _write_jsonl_atomic(labels_path, labels)
+        manifest["observation_count"] = len(labels)
+        manifest["observation_format"] = "delta-observations-v1"
+        manifest["observation_last_seq"] = last_contiguous_seq
+        manifest["observation_code_state_id"] = code_state_id
+        if code_changed and code_state_id is not None:
+            manifest["last_code_state_id"] = code_state_id
 
     def create_session(
         self,
@@ -111,6 +295,7 @@ class TraceStore:
         (session_dir / "code").mkdir()
         (session_dir / "executions").mkdir()
         (session_dir / "submissions").mkdir()
+        (session_dir / "delta-observations").mkdir()
 
         initial_code_state_id = None
         if initial_source is not None:
@@ -128,15 +313,21 @@ class TraceStore:
             "started_at": utc_now(),
             "ended_at": None,
             "event_count": 0,
+            "observation_count": 0,
+            "observation_format": "delta-observations-v1",
+            "observation_last_seq": 0,
+            "observation_code_state_id": initial_code_state_id,
             "execution_count": 0,
             "submission_count": 0,
             "passed_submission_id": None,
             "passed_at": None,
             "last_seq": 0,
             "initial_code_state_id": initial_code_state_id,
+            "last_code_state_id": initial_code_state_id,
             "client": client or {},
             "recruitment": normalized_recruitment,
         }
+        _write_jsonl_atomic(session_dir / "delta-observations" / "step_labels.jsonl", [])
         _write_json_atomic(session_dir / "manifest.json", manifest)
         return manifest
 
@@ -151,12 +342,7 @@ class TraceStore:
 
         with self._lock_for(session_id):
             manifest = self._read_manifest(session_id)
-            if batch_path.is_file():
-                stored_sequences, last_contiguous_seq = self._event_state(session_dir)
-                manifest["event_count"] = len(stored_sequences)
-                manifest["last_seq"] = last_contiguous_seq
-                _write_json_atomic(session_dir / "manifest.json", manifest)
-                return {"accepted": 0, "duplicate": True, "object_key": relative_path.as_posix()}
+            stored_events = self._stored_events(session_dir)
 
             normalized_events: list[dict[str, Any]] = []
             first_seq = events[0].get("seq") if isinstance(events[0], dict) else None
@@ -178,25 +364,58 @@ class TraceStore:
                     }
                 )
 
-            stored_sequences, _last_contiguous_seq = self._event_state(session_dir)
-            overlapping_sequences = stored_sequences.keys() & {event["seq"] for event in normalized_events}
-            if overlapping_sequences:
-                first_overlap = min(overlapping_sequences)
-                raise ValueError(f"Event sequence {first_overlap} is already stored")
+            new_events: list[dict[str, Any]] = []
+            duplicate_count = 0
+            for event in normalized_events:
+                stored_event = stored_events.get(event["seq"])
+                if stored_event is None:
+                    new_events.append(event)
+                    continue
+                if not self._same_client_event(stored_event, event):
+                    raise ValueError(f"Event sequence {event['seq']} conflicts with stored data")
+                duplicate_count += 1
 
+            if not new_events:
+                stored_sequences, last_contiguous_seq = self._event_state(session_dir)
+                manifest["event_count"] = len(stored_sequences)
+                manifest["last_seq"] = last_contiguous_seq
+                self._materialize_delta_observations(session_dir, manifest, stored_events)
+                _write_json_atomic(session_dir / "manifest.json", manifest)
+                return {
+                    "accepted": 0,
+                    "duplicate": True,
+                    "duplicate_count": duplicate_count,
+                    "object_key": relative_path.as_posix(),
+                }
+
+            batch_events = []
+            if batch_path.is_file():
+                batch_events = [json.loads(line) for line in batch_path.read_text(encoding="utf-8").splitlines()]
+            batch_events.extend(new_events)
+            batch_events.sort(key=lambda event: event["seq"])
             with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=batch_path.parent, delete=False) as temp_file:
-                for event in normalized_events:
+                for event in batch_events:
                     temp_file.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")))
                     temp_file.write("\n")
                 temp_path = Path(temp_file.name)
             os.replace(temp_path, batch_path)
 
-            stored_sequences, last_contiguous_seq = self._event_state(session_dir)
+            stored_events.update({event["seq"]: event for event in new_events})
+            stored_sequences = {seq: event.get("client_event_id") for seq, event in stored_events.items()}
+            last_contiguous_seq = 0
+            while last_contiguous_seq + 1 in stored_sequences:
+                last_contiguous_seq += 1
             manifest["last_seq"] = last_contiguous_seq
             manifest["event_count"] = len(stored_sequences)
+            self._materialize_delta_observations(session_dir, manifest, stored_events)
             _write_json_atomic(session_dir / "manifest.json", manifest)
 
-        return {"accepted": len(normalized_events), "duplicate": False, "object_key": relative_path.as_posix()}
+        return {
+            "accepted": len(new_events),
+            "duplicate": False,
+            "duplicate_count": duplicate_count,
+            "object_key": relative_path.as_posix(),
+        }
 
     def record_execution(
         self,

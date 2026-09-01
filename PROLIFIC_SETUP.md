@@ -30,6 +30,7 @@ The server only returns this URL after it recompiles the submitted source, all f
 - Click Submit and confirm the accepted dialog appears.
 - Click Return to Prolific and confirm the correct completion code is registered.
 - Confirm the matching trace manifest contains `recruitment.prolific_pid`, `study_id`, and `prolific_session_id`.
+- Confirm `delta-observations/step_labels.jsonl` covers the expected code snapshots, documentation views, and Run/Submit markers.
 - Confirm the session contains a passing JSON file under `submissions/`.
 - Run a small paid pilot before opening all study places.
 

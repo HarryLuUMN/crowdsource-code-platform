@@ -43,7 +43,7 @@ let toastTimer;
 let previousSource = "";
 let telemetrySessionId = null;
 let telemetrySeq = 0;
-let telemetryFlush = null;
+let telemetryFlush = Promise.resolve();
 let telemetryInFlightBatch = null;
 let sessionReady;
 const pendingEvents = [];
@@ -100,36 +100,30 @@ async function initializeTelemetrySession() {
 }
 
 async function flushEvents() {
-  await sessionReady;
-  if (!telemetrySessionId || pendingEvents.length === 0) return;
-  if (telemetryFlush) {
-    await telemetryFlush;
-    return;
-  }
-
-  const events = pendingEvents.splice(0, 100);
-  const batchId = crypto.randomUUID();
-  telemetryInFlightBatch = { batch_id: batchId, events };
-  telemetryFlush = (async () => {
-    try {
-      const response = await fetch("/api/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: telemetrySessionId, batch_id: batchId, events }),
-        keepalive: true,
-      });
-      if (!response.ok) throw new Error("Telemetry upload failed");
-    } catch (_error) {
-      pendingEvents.unshift(...events);
+  telemetryFlush = telemetryFlush.then(async () => {
+    await sessionReady;
+    if (!telemetrySessionId) return;
+    while (pendingEvents.length > 0) {
+      const events = pendingEvents.splice(0, 100);
+      const batchId = crypto.randomUUID();
+      telemetryInFlightBatch = { batch_id: batchId, events };
+      try {
+        const response = await fetch("/api/events", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: telemetrySessionId, batch_id: batchId, events }),
+          keepalive: true,
+        });
+        if (!response.ok) throw new Error("Telemetry upload failed");
+      } catch (_error) {
+        pendingEvents.unshift(...events);
+        return;
+      } finally {
+        telemetryInFlightBatch = null;
+      }
     }
-  })();
-
-  try {
-    await telemetryFlush;
-  } finally {
-    telemetryFlush = null;
-    telemetryInFlightBatch = null;
-  }
+  });
+  return telemetryFlush;
 }
 
 function describeEdit(before, after, inputType = "") {
@@ -402,7 +396,11 @@ resetButton.addEventListener("click", () => {
   previousSource = STARTER_SOURCE;
   localStorage.setItem(SOURCE_STORAGE_KEY, STARTER_SOURCE);
   updateEditorChrome();
-  recordEvent("file.reset", { previous_length: previousLength, source_length_after: STARTER_SOURCE.length });
+  recordEvent("file.reset", {
+    previous_length: previousLength,
+    source_length_after: STARTER_SOURCE.length,
+    source_after: STARTER_SOURCE,
+  });
   showToast("Editor cleared");
   editor.focus();
 });
@@ -434,7 +432,15 @@ window.addEventListener("pagehide", () => {
     event_batches: eventBatches,
     final_source: editor.value,
   });
-  navigator.sendBeacon("/api/sessions/end", new Blob([payload], { type: "application/json" }));
+  const sent = navigator.sendBeacon("/api/sessions/end", new Blob([payload], { type: "application/json" }));
+  if (!sent) {
+    void fetch("/api/sessions/end", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: payload,
+      keepalive: true,
+    });
+  }
 });
 
 fetch("/api/health")

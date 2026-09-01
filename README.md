@@ -22,6 +22,10 @@ No database is required for the MVP. Each browser visit creates one directory un
 data/traces/<session-id>/
 ├── manifest.json
 ├── events/<batch-id>.jsonl
+├── delta-observations/
+│   ├── delta-session1-step0.txt
+│   ├── delta-session1-step1.txt
+│   └── step_labels.jsonl
 ├── code/
 │   ├── source-initial.ks
 │   ├── source-final.ks
@@ -37,6 +41,10 @@ data/traces/<session-id>/
 ```
 
 The event stream records semantic edits (inserted/deleted text and offsets), paste, undo/redo, reset, run requests, compiler outcomes, output views, visibility changes, and session timing. Compiler bundles include the exact source, full knitout or partial error knitout, diagnostics, logs, metrics, duration, exit code, and toolchain versions.
+
+`delta-observations/` is an analysis-ready materialized view compatible with the benchmark trajectory layout used by `dsl-bench-alpha-delta-obs`. Every accepted code edit produces a complete source snapshot. Tutorial/documentation views produce `READ_DOCUMENTATION`, and Run or Submit requests produce `BROWSER_TESTING`. `step_labels.jsonl` links each observation to its raw event sequence, timestamp, elapsed time, generic action label, and immutable code state. Fine-grained intent labels and behavior/challenge summaries remain offline annotations rather than guessed collection-time data.
+
+Event uploads are idempotent by event identity. If a browser retries a batch after losing the response, the server accepts any unseen suffix and ignores matching events already stored without creating sequence gaps.
 
 Final Submit attempts are recompiled and checked on the server. Each attempt preserves its semantic test results and links back to the immutable compiler execution. Passing submissions also mark the session manifest with `passed_submission_id` and `passed_at`.
 

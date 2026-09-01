@@ -157,7 +157,7 @@ class KnitScriptHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/api/health":
-            self._send_json(HTTPStatus.OK, {"ok": True, "compiler": "knit-script", "version": "0.3.0"})
+            self._send_json(HTTPStatus.OK, {"ok": True, "compiler": "knit-script", "version": "0.4.0"})
             return
         if self.path == "/api/study-config":
             self._send_json(HTTPStatus.OK, {"ok": True, **build_study_config()})

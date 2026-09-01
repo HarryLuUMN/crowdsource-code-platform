@@ -110,6 +110,146 @@ class TraceStoreTests(unittest.TestCase):
             self.assertTrue(retry["duplicate"])
             self.assertEqual(1, manifest["event_count"])
 
+    def test_overlapping_retry_accepts_only_the_unseen_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = TraceStore(Path(temp_dir))
+            session = store.create_session("participant-test", "playground", initial_source="")
+            first_events = [
+                {"client_event_id": "client:1", "seq": 1, "type": "session.started", "payload": {}},
+                {
+                    "client_event_id": "client:2",
+                    "seq": 2,
+                    "type": "editor.edit",
+                    "payload": {
+                        "operation": "insert",
+                        "range_start": 0,
+                        "range_end": 0,
+                        "inserted_text": "a",
+                        "deleted_text": "",
+                        "source_length_after": 1,
+                    },
+                },
+            ]
+            store.append_event_batch(session["session_id"], "batch-0001", first_events)
+
+            retry = store.append_event_batch(
+                session["session_id"],
+                "batch-0002",
+                [
+                    first_events[1],
+                    {"client_event_id": "client:3", "seq": 3, "type": "run.requested", "payload": {}},
+                ],
+            )
+
+            session_dir = Path(temp_dir) / session["session_id"]
+            manifest = json.loads((session_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(1, retry["accepted"])
+            self.assertEqual(1, retry["duplicate_count"])
+            self.assertEqual(3, manifest["event_count"])
+            self.assertEqual(3, manifest["last_seq"])
+
+    def test_same_batch_id_can_extend_a_previously_stored_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = TraceStore(Path(temp_dir))
+            session = store.create_session("participant-test", "playground")
+            first_event = {"client_event_id": "client:1", "seq": 1, "type": "session.started", "payload": {}}
+            store.append_event_batch(session["session_id"], "batch-0001", [first_event])
+
+            retry = store.append_event_batch(
+                session["session_id"],
+                "batch-0001",
+                [
+                    first_event,
+                    {"client_event_id": "client:2", "seq": 2, "type": "run.requested", "payload": {}},
+                ],
+            )
+
+            session_dir = Path(temp_dir) / session["session_id"]
+            batch_lines = (session_dir / "events" / "batch-0001.jsonl").read_text().splitlines()
+            manifest = json.loads((session_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(1, retry["accepted"])
+            self.assertEqual(1, retry["duplicate_count"])
+            self.assertEqual(2, len(batch_lines))
+            self.assertEqual(2, manifest["event_count"])
+            self.assertEqual(2, manifest["last_seq"])
+
+    def test_conflicting_retry_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = TraceStore(Path(temp_dir))
+            session = store.create_session("participant-test", "playground")
+            store.append_event_batch(
+                session["session_id"],
+                "batch-0001",
+                [{"client_event_id": "client:1", "seq": 1, "type": "page.visible", "payload": {}}],
+            )
+
+            with self.assertRaisesRegex(ValueError, "conflicts with stored data"):
+                store.append_event_batch(
+                    session["session_id"],
+                    "batch-0002",
+                    [{"client_event_id": "client:other", "seq": 1, "type": "page.hidden", "payload": {}}],
+                )
+
+    def test_delta_observations_preserve_full_code_snapshots_and_action_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = TraceStore(Path(temp_dir))
+            session = store.create_session("participant-test", "playground", initial_source="")
+            events = [
+                {"client_event_id": "client:1", "seq": 1, "type": "session.started", "payload": {}},
+                {
+                    "client_event_id": "client:2",
+                    "seq": 2,
+                    "type": "editor.edit",
+                    "client_timestamp": "2026-09-01T13:00:00Z",
+                    "elapsed_ms": 100,
+                    "payload": {
+                        "operation": "insert",
+                        "range_start": 0,
+                        "range_end": 0,
+                        "inserted_text": "a😀",
+                        "deleted_text": "",
+                        "source_length_after": 3,
+                    },
+                },
+                {
+                    "client_event_id": "client:3",
+                    "seq": 3,
+                    "type": "editor.edit",
+                    "payload": {
+                        "operation": "insert",
+                        "range_start": 3,
+                        "range_end": 3,
+                        "inserted_text": "b",
+                        "deleted_text": "",
+                        "source_length_after": 4,
+                    },
+                },
+                {"client_event_id": "client:4", "seq": 4, "type": "guide.tutorial_viewed", "payload": {}},
+                {"client_event_id": "client:5", "seq": 5, "type": "run.requested", "payload": {}},
+            ]
+
+            store.append_event_batch(session["session_id"], "batch-0001", events)
+
+            session_dir = Path(temp_dir) / session["session_id"]
+            observations = session_dir / "delta-observations"
+            manifest = json.loads((session_dir / "manifest.json").read_text(encoding="utf-8"))
+            labels = [json.loads(line) for line in (observations / "step_labels.jsonl").read_text().splitlines()]
+            self.assertEqual("a😀", (observations / "delta-session1-step0.txt").read_text(encoding="utf-8"))
+            self.assertEqual("a😀b", (observations / "delta-session1-step1.txt").read_text(encoding="utf-8"))
+            self.assertEqual(
+                "READ_DOCUMENTATION\n",
+                (observations / "delta-session1-step2.txt").read_text(encoding="utf-8"),
+            )
+            self.assertEqual("BROWSER_TESTING\n", (observations / "delta-session1-step3.txt").read_text())
+            self.assertEqual(
+                ["INSERT_CODE", "INSERT_CODE", "READ_DOC", "BROWSER_TEST"],
+                [row["primaryLabel"] for row in labels],
+            )
+            self.assertEqual(4, manifest["observation_count"])
+            self.assertEqual("delta-observations-v1", manifest["observation_format"])
+            code_state_path = session_dir / "code" / f"{manifest['last_code_state_id'][7:]}.ks"
+            self.assertTrue(code_state_path.is_file())
+
     def test_out_of_order_batches_repair_the_contiguous_sequence(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = TraceStore(Path(temp_dir))
