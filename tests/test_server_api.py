@@ -46,6 +46,30 @@ class ServerApiTests(unittest.TestCase):
         except HTTPError as error:
             return error.code, json.loads(error.read())
 
+    def get_text(self, path: str) -> tuple[int, str]:
+        with urlopen(f"{self.base_url}{path}") as response:
+            return response.status, response.read().decode("utf-8")
+
+    def test_studio_includes_a_tutorial_panel_and_official_documentation_link(self) -> None:
+        status, html = self.get_text("/")
+
+        self.assertEqual(200, status)
+        self.assertIn('id="tutorialGuide"', html)
+        self.assertIn('data-guide-tab="tutorial"', html)
+        self.assertIn("https://mhofmann-khoury.github.io/knit_script/", html)
+        self.assertIn("Open full documentation", html)
+
+    def test_studio_starts_with_an_empty_editor(self) -> None:
+        html_status, html = self.get_text("/")
+        script_status, script = self.get_text("/app.js")
+
+        self.assertEqual(200, html_status)
+        self.assertEqual(200, script_status)
+        self.assertIn("Write your KnitScript program from scratch", html)
+        self.assertIn("Clear editor", html)
+        self.assertIn('const STARTER_SOURCE = "";', script)
+        self.assertNotIn("TODO: cast on", script)
+
     def test_correct_submission_is_rechecked_saved_and_given_completion_url(self) -> None:
         _status, session_result = self.post_json(
             "/api/sessions",

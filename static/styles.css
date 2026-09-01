@@ -89,12 +89,31 @@ button { color: inherit; }
 
 .workspace { max-width: 1540px; height: calc(100vh - 68px); margin: 0 auto; padding: 20px 30px 30px; display: flex; flex-direction: column; gap: 12px; }
 
-.task-panel { min-width: 0; padding: 16px 20px; border: 1px solid var(--line); border-radius: 13px; background: linear-gradient(105deg, rgba(229, 255, 111, 0.08), transparent 42%), var(--panel); display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 18px; align-items: center; box-shadow: 0 15px 50px rgba(0, 0, 0, 0.12); }
+.guide-panel { min-width: 0; border: 1px solid var(--line); border-radius: 13px; background: linear-gradient(105deg, rgba(229, 255, 111, 0.08), transparent 42%), var(--panel); display: grid; grid-template-columns: 104px minmax(0, 1fr); box-shadow: 0 15px 50px rgba(0, 0, 0, 0.12); overflow: hidden; }
+.guide-tabs { padding: 14px 10px; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 5px; background: rgba(12, 13, 11, 0.22); }
+.guide-tab { width: 100%; min-height: 34px; padding: 0 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--faint); font: 650 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.08em; text-align: left; text-transform: uppercase; cursor: pointer; }
+.guide-tab:hover { color: var(--ink); background: rgba(255, 255, 255, 0.035); }
+.guide-tab.active { border-color: rgba(229, 255, 111, 0.22); color: var(--accent); background: var(--accent-soft); }
+.guide-view { min-width: 0; padding: 16px 20px; }
+.task-guide { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 18px; align-items: center; }
 .task-label { align-self: stretch; border-right: 1px solid var(--line); color: var(--accent); display: flex; align-items: center; font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.16em; text-transform: uppercase; }
 .task-copy h1 { margin: 0 0 5px; font-size: 16px; line-height: 1.25; font-weight: 650; }
 .task-copy p { max-width: 920px; margin: 0 0 10px; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .task-requirements { display: flex; flex-wrap: wrap; gap: 6px; }
 .task-requirements span { padding: 5px 8px; border: 1px solid #383a33; border-radius: 999px; color: #c4c3bb; background: rgba(255, 255, 255, 0.025); font: 10px/1 ui-monospace, monospace; }
+.tutorial-guide { padding-top: 14px; padding-bottom: 14px; }
+.tutorial-intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 13px; }
+.tutorial-kicker { display: block; margin-bottom: 5px; color: var(--accent); font: 700 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.14em; text-transform: uppercase; }
+.tutorial-intro h1 { margin: 0 0 4px; font-size: 15px; line-height: 1.25; font-weight: 650; }
+.tutorial-intro p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.documentation-link { flex: 0 0 auto; padding: 8px 10px; border: 1px solid rgba(229, 255, 111, 0.25); border-radius: 7px; color: var(--accent); background: var(--accent-soft); font-size: 10px; font-weight: 700; text-decoration: none; }
+.documentation-link:hover { border-color: rgba(229, 255, 111, 0.52); background: rgba(229, 255, 111, 0.17); }
+.tutorial-steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 7px; }
+.tutorial-steps article { min-width: 0; padding: 10px; border: 1px solid #34362f; border-radius: 8px; background: rgba(12, 13, 11, 0.34); }
+.tutorial-steps strong { display: block; margin-bottom: 7px; color: #d3d2ca; font-size: 10px; font-weight: 650; }
+.tutorial-steps code { color: var(--accent); font: 9px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.tutorial-steps p { margin: 6px 0 0; color: var(--faint); font-size: 9px; line-height: 1.45; }
+.tutorial-steps p code { color: #c8d88a; }
 
 .studio { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(440px, 1.05fr) minmax(380px, 0.95fr); gap: 12px; }
 .panel { min-width: 0; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 15px 50px rgba(0, 0, 0, 0.18); }
@@ -156,11 +175,18 @@ button { color: inherit; }
   .studio { grid-template-columns: 1fr; height: auto; }
   .panel { min-height: 520px; }
   .result-panel { min-height: 420px; }
+  .tutorial-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 520px) {
-  .task-panel { grid-template-columns: 1fr; gap: 10px; padding: 17px; }
+  .guide-panel { grid-template-columns: 1fr; }
+  .guide-tabs { padding: 9px; border-right: 0; border-bottom: 1px solid var(--line); flex-direction: row; }
+  .guide-tab { width: auto; min-width: 90px; text-align: center; }
+  .guide-view { padding: 17px; }
+  .task-guide { grid-template-columns: 1fr; gap: 10px; }
   .task-label { min-height: 18px; border-right: 0; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+  .tutorial-intro { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .tutorial-steps { grid-template-columns: 1fr; }
   .topbar-actions { gap: 7px; }
   .run-button kbd { display: none; }
   .line-numbers { min-width: 43px; }

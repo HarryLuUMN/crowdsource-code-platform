@@ -8,17 +8,8 @@ const prolificRecruitment = {
 };
 const hasProlificParticipant = Boolean(prolificRecruitment.prolific_pid);
 const sourceStorageScope = prolificRecruitment.prolific_session_id || prolificRecruitment.prolific_pid || "direct";
-const SOURCE_STORAGE_KEY = `knitscript-studio-source:${TASK_ID}:${sourceStorageScope}`;
-const STARTER_SOURCE = `// Complete the stockinette swatch task.
-pattern_width = 10;
-pattern_height = 6;
-c = 1;
-
-with Carrier as c:{
-  // TODO: cast on 10 stitches on the front bed.
-  // TODO: knit 2 securing rows, then call releasehook.
-  // TODO: knit 6 more rows, alternating direction each row.
-}`;
+const SOURCE_STORAGE_KEY = `knitscript-studio-source:${TASK_ID}:from-scratch-v1:${sourceStorageScope}`;
+const STARTER_SOURCE = "";
 
 const editor = document.querySelector("#sourceEditor");
 const lineNumbers = document.querySelector("#lineNumbers");
@@ -42,6 +33,9 @@ const completionMessage = document.querySelector("#completionMessage");
 const closeCompletionButton = document.querySelector("#closeCompletionButton");
 const prolificCompletionLink = document.querySelector("#prolificCompletionLink");
 const tabs = [...document.querySelectorAll(".tab")];
+const guideTabs = [...document.querySelectorAll(".guide-tab")];
+const guideViews = [...document.querySelectorAll(".guide-view")];
+const documentationLink = document.querySelector("#documentationLink");
 
 let activeTab = "tests";
 let saveTimer;
@@ -234,6 +228,18 @@ function selectTab(name, logInteraction = false) {
   if (logInteraction) recordEvent(`output.${name}_viewed`);
 }
 
+function selectGuideTab(name, logInteraction = false) {
+  guideTabs.forEach((tab) => {
+    const selected = tab.dataset.guideTab === name;
+    tab.classList.toggle("active", selected);
+    tab.setAttribute("aria-selected", String(selected));
+  });
+  guideViews.forEach((view) => {
+    view.hidden = view.id !== `${name}Guide`;
+  });
+  if (logInteraction) recordEvent(`guide.${name}_viewed`);
+}
+
 function renderCheck(check) {
   if (!check || !Array.isArray(check.tests)) {
     testOutput.innerHTML = "";
@@ -397,7 +403,7 @@ resetButton.addEventListener("click", () => {
   localStorage.setItem(SOURCE_STORAGE_KEY, STARTER_SOURCE);
   updateEditorChrome();
   recordEvent("file.reset", { previous_length: previousLength, source_length_after: STARTER_SOURCE.length });
-  showToast("Starter restored");
+  showToast("Editor cleared");
   editor.focus();
 });
 copyButton.addEventListener("click", async () => {
@@ -406,6 +412,8 @@ copyButton.addEventListener("click", async () => {
   showToast("Knitout copied");
 });
 tabs.forEach((tab) => tab.addEventListener("click", () => selectTab(tab.dataset.tab, true)));
+guideTabs.forEach((tab) => tab.addEventListener("click", () => selectGuideTab(tab.dataset.guideTab, true)));
+documentationLink.addEventListener("click", () => recordEvent("guide.documentation_opened"));
 closeCompletionButton.addEventListener("click", () => completionDialog.close());
 
 document.addEventListener("visibilitychange", () => {

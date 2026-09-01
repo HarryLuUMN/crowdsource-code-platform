@@ -6,14 +6,14 @@
     <meta name="description" content="Write and run KnitScript in your browser." />
     <title>KnitScript Studio</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=3" />
+    <link rel="stylesheet" href="/styles.css?v=4" />
   </head>
   <body>
     <header class="topbar">
       <div class="topbar-actions">
         <span class="compiler-state" id="compilerState"><i></i> Compiler ready</span>
         <span class="study-state" id="studyState">Preview mode</span>
-        <button class="ghost-button" id="resetButton" type="button">Reset starter</button>
+        <button class="ghost-button" id="resetButton" type="button">Clear editor</button>
         <button class="run-button" id="runButton" type="button">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 8 6-8 6V4Z" /></svg>
           <span>Run</span>
@@ -27,16 +27,63 @@
     </header>
 
     <main class="workspace">
-      <section class="task-panel" aria-labelledby="taskTitle">
-        <div class="task-label">Task 01</div>
-        <div class="task-copy">
-          <h1 id="taskTitle">Complete a stockinette swatch</h1>
-          <p>Finish the starter code so the machine creates the required swatch. Run your code to check each requirement, then submit when all tests pass.</p>
-          <div class="task-requirements" aria-label="Task requirements">
-            <span>10 front-bed needles</span>
-            <span>2 securing rows</span>
-            <span>releasehook</span>
-            <span>6 alternating rows</span>
+      <section class="guide-panel" aria-label="Task instructions and KnitScript tutorial">
+        <div class="guide-tabs" role="tablist" aria-label="Study guide">
+          <button class="guide-tab active" id="taskGuideTab" data-guide-tab="task" role="tab" aria-selected="true" aria-controls="taskGuide" type="button">Task</button>
+          <button class="guide-tab" id="tutorialGuideTab" data-guide-tab="tutorial" role="tab" aria-selected="false" aria-controls="tutorialGuide" type="button">Tutorial</button>
+        </div>
+
+        <div class="guide-view task-guide" id="taskGuide" role="tabpanel" aria-labelledby="taskGuideTab">
+          <div class="task-label">Task 01</div>
+          <div class="task-copy">
+            <h1 id="taskTitle">Create a stockinette swatch</h1>
+            <p>Write your KnitScript program from scratch so the machine creates the required swatch. Run your code to check each requirement, then submit when all tests pass.</p>
+            <div class="task-requirements" aria-label="Task requirements">
+              <span>10 front-bed needles</span>
+              <span>2 securing rows</span>
+              <span>releasehook</span>
+              <span>6 alternating rows</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="guide-view tutorial-guide" id="tutorialGuide" role="tabpanel" aria-labelledby="tutorialGuideTab" hidden>
+          <div class="tutorial-intro">
+            <div>
+              <span class="tutorial-kicker">KnitScript quick guide</span>
+              <h1>Build a pattern from machine-aware blocks</h1>
+              <p>KnitScript uses Python-like control flow with knitting-specific needles, carriers, and carriage passes.</p>
+            </div>
+            <a class="documentation-link" id="documentationLink" href="https://mhofmann-khoury.github.io/knit_script/" target="_blank" rel="noopener noreferrer">
+              Open full documentation <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+          <div class="tutorial-steps">
+            <article>
+              <strong>1. Select needles</strong>
+              <code>Front_Needles[0:width]</code>
+              <p>Slices select a continuous range on the front bed.</p>
+            </article>
+            <article>
+              <strong>2. Activate yarn</strong>
+              <code>with Carrier as c:{ … }</code>
+              <p>Operations inside the scope use the selected carrier.</p>
+            </article>
+            <article>
+              <strong>3. Set a pass</strong>
+              <code>in Leftward direction:{ … }</code>
+              <p>A directed block orders operations as the carriage moves.</p>
+            </article>
+            <article>
+              <strong>4. Work held loops</strong>
+              <code>in reverse direction:{ knit Loops; }</code>
+              <p><code>Loops</code> tracks needles currently holding stitches.</p>
+            </article>
+            <article>
+              <strong>5. Repeat and release</strong>
+              <code>for row in range(height):{ … }</code>
+              <p>Use <code>releasehook;</code> once the yarn is secured.</p>
+            </article>
           </div>
         </div>
       </section>
@@ -107,6 +154,6 @@
         <a class="submit-button completion-link" id="prolificCompletionLink" hidden>Return to Prolific</a>
       </div>
     </dialog>
-    <script src="/app.js?v=3" defer></script>
+    <script src="/app.js?v=5" defer></script>
   </body>
 </html>
