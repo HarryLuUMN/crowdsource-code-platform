@@ -9,6 +9,28 @@ from trace_store import TraceStore
 
 
 class TraceStoreTests(unittest.TestCase):
+    def test_session_preserves_prolific_recruitment_identifiers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = TraceStore(Path(temp_dir))
+
+            session = store.create_session(
+                participant_id="participant-test",
+                task_id="stockinette-swatch-v1",
+                recruitment={
+                    "source": "prolific",
+                    "prolific_pid": "PID123",
+                    "study_id": "STUDY123",
+                    "prolific_session_id": "SESSION123",
+                },
+            )
+
+            manifest = json.loads(
+                (Path(temp_dir) / session["session_id"] / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual("prolific", manifest["recruitment"]["source"])
+            self.assertEqual("PID123", manifest["recruitment"]["prolific_pid"])
+            self.assertEqual("SESSION123", manifest["recruitment"]["prolific_session_id"])
+
     def test_session_event_batch_is_persisted_as_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = TraceStore(Path(temp_dir))
@@ -125,6 +147,29 @@ class TraceStoreTests(unittest.TestCase):
             result_path = Path(temp_dir) / session["session_id"] / "executions" / execution["execution_id"] / "result.json"
             stored_result = json.loads(result_path.read_text(encoding="utf-8"))
             self.assertEqual("full runner traceback", stored_result["compiler_result"]["details"])
+
+    def test_passing_submission_is_persisted_and_marks_the_session(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = TraceStore(Path(temp_dir))
+            session = store.create_session("participant-test", "stockinette-swatch-v1")
+
+            submission = store.record_submission(
+                session_id=session["session_id"],
+                source="completed source",
+                check={"passed": True, "passed_count": 5, "total_count": 5, "tests": []},
+                execution_id="execution-test",
+            )
+
+            session_dir = Path(temp_dir) / session["session_id"]
+            stored_submission = json.loads(
+                (session_dir / "submissions" / f"{submission['submission_id']}.json").read_text(encoding="utf-8")
+            )
+            manifest = json.loads((session_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertTrue(stored_submission["passed"])
+            self.assertEqual("execution-test", stored_submission["execution_id"])
+            self.assertEqual(1, manifest["submission_count"])
+            self.assertEqual(submission["submission_id"], manifest["passed_submission_id"])
+            self.assertIsNotNone(manifest["passed_at"])
 
     def test_ending_a_session_finalizes_its_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

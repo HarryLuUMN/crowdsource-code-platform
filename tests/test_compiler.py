@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from http import HTTPStatus
 
-from server import compile_source
+from server import build_study_config, compile_source, evaluate_source
 
 
 VALID_PROGRAM = """pattern_width = 6;
@@ -60,6 +60,25 @@ with Carrier as 1:{
         self.assertFalse(result["ok"])
         self.assertIn("partial_knitout", result)
         self.assertIn("inhook 1", result["partial_knitout"])
+
+    def test_evaluation_reports_compiling_but_incomplete_answers(self) -> None:
+        status, result = evaluate_source(VALID_PROGRAM)
+
+        self.assertEqual(HTTPStatus.OK, status)
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["check"]["passed"])
+        failed_ids = {test["id"] for test in result["check"]["tests"] if not test["passed"]}
+        self.assertIn("needle-width", failed_ids)
+        self.assertIn("stockinette-rows", failed_ids)
+
+    def test_study_config_only_accepts_official_prolific_completion_urls(self) -> None:
+        configured = build_study_config("https://app.prolific.com/submissions/complete?cc=ABC123")
+        rejected = build_study_config("https://example.com/complete?cc=ABC123")
+
+        self.assertTrue(configured["prolific"]["configured"])
+        self.assertEqual("https://app.prolific.com/submissions/complete?cc=ABC123", configured["prolific"]["completion_url"])
+        self.assertFalse(rejected["prolific"]["configured"])
+        self.assertIsNone(rejected["prolific"]["completion_url"])
 
 
 if __name__ == "__main__":

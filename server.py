@@ -13,7 +13,9 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
+from answer_checker import TASK_ID, check_stockinette_answer
 from trace_store import TraceStore, utc_now
 
 ROOT = Path(__file__).resolve().parent
@@ -95,6 +97,29 @@ def compile_source(source: str) -> tuple[int, dict[str, Any]]:
     return HTTPStatus.OK, payload
 
 
+def evaluate_source(source: str) -> tuple[int, dict[str, Any]]:
+    status, result = compile_source(source)
+    result["check"] = check_stockinette_answer(result)
+    return status, result
+
+
+def build_study_config(completion_url: str | None = None) -> dict[str, Any]:
+    candidate = (completion_url if completion_url is not None else os.environ.get("PROLIFIC_COMPLETION_URL", "")).strip()
+    parsed = urlparse(candidate)
+    valid_completion_url = (
+        candidate
+        if parsed.scheme == "https" and parsed.hostname == "app.prolific.com" and parsed.path.startswith("/submissions/complete")
+        else None
+    )
+    return {
+        "task_id": TASK_ID,
+        "prolific": {
+            "configured": valid_completion_url is not None,
+            "completion_url": valid_completion_url,
+        },
+    }
+
+
 class KnitScriptHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
@@ -128,12 +153,15 @@ class KnitScriptHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/api/health":
-            self._send_json(HTTPStatus.OK, {"ok": True, "compiler": "knit-script", "version": "0.2.1"})
+            self._send_json(HTTPStatus.OK, {"ok": True, "compiler": "knit-script", "version": "0.3.0"})
+            return
+        if self.path == "/api/study-config":
+            self._send_json(HTTPStatus.OK, {"ok": True, **build_study_config()})
             return
         super().do_GET()
 
     def do_POST(self) -> None:
-        supported_paths = {"/api/run", "/api/sessions", "/api/events", "/api/sessions/end"}
+        supported_paths = {"/api/run", "/api/submit", "/api/sessions", "/api/events", "/api/sessions/end"}
         if self.path not in supported_paths:
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "Not found"}})
             return
@@ -148,6 +176,7 @@ class KnitScriptHandler(SimpleHTTPRequestHandler):
                     task_id=request.get("task_id", "playground"),
                     client=request.get("client"),
                     initial_source=request.get("initial_source"),
+                    recruitment=request.get("recruitment"),
                 )
                 self._send_json(HTTPStatus.CREATED, {"ok": True, "session": manifest})
                 return
@@ -187,10 +216,18 @@ class KnitScriptHandler(SimpleHTTPRequestHandler):
                 return
 
             source = request.get("source")
+            session_id = request.get("session_id")
+            is_submission = self.path == "/api/submit"
+            if is_submission and not isinstance(session_id, str):
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"ok": False, "error": {"message": "A study session is required before submitting."}},
+                )
+                return
             requested_at = utc_now()
             execution_id = str(uuid.uuid4())
-            status, result = compile_source(source)
-            session_id = request.get("session_id")
+            status, result = evaluate_source(source)
+            stored = None
             if session_id and isinstance(source, str):
                 try:
                     stored = get_trace_store().record_execution(
@@ -210,6 +247,26 @@ class KnitScriptHandler(SimpleHTTPRequestHandler):
                     result["trace_saved"] = True
                     result["execution_id"] = stored["execution_id"]
                     result["code_state_id"] = stored["code_state_id"]
+            if is_submission:
+                if stored is None:
+                    self._send_json(
+                        HTTPStatus.INTERNAL_SERVER_ERROR,
+                        {"ok": False, "error": {"type": "StorageError", "message": "The submission could not be saved."}},
+                    )
+                    return
+                submission = get_trace_store().record_submission(
+                    session_id=session_id,
+                    source=source,
+                    check=result["check"],
+                    execution_id=stored["execution_id"],
+                )
+                result["submission"] = {
+                    "submission_id": submission["submission_id"],
+                    "passed": submission["passed"],
+                    "submitted_at": submission["submitted_at"],
+                }
+                if submission["passed"]:
+                    result["completion_url"] = build_study_config()["prolific"]["completion_url"]
             self._send_json(status, result)
         except ValueError as error:
             self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": {"message": str(error)}})

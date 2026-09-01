@@ -91,16 +91,26 @@ class TraceStore:
         task_id: str,
         client: dict[str, Any] | None = None,
         initial_source: str | None = None,
+        recruitment: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if client is not None and not isinstance(client, dict):
             raise ValueError("client must be an object")
         if initial_source is not None and not isinstance(initial_source, str):
             raise ValueError("initial_source must be a string")
+        if recruitment is not None and not isinstance(recruitment, dict):
+            raise ValueError("recruitment must be an object")
+        recruitment_fields = {"source", "prolific_pid", "study_id", "prolific_session_id"}
+        normalized_recruitment = {}
+        for key, value in (recruitment or {}).items():
+            if key not in recruitment_fields or not isinstance(value, str) or len(value) > 256:
+                raise ValueError("Invalid recruitment metadata")
+            normalized_recruitment[key] = value
         session_id = str(uuid.uuid4())
         session_dir = self._session_dir(session_id)
         (session_dir / "events").mkdir(parents=True)
         (session_dir / "code").mkdir()
         (session_dir / "executions").mkdir()
+        (session_dir / "submissions").mkdir()
 
         initial_code_state_id = None
         if initial_source is not None:
@@ -119,9 +129,13 @@ class TraceStore:
             "ended_at": None,
             "event_count": 0,
             "execution_count": 0,
+            "submission_count": 0,
+            "passed_submission_id": None,
+            "passed_at": None,
             "last_seq": 0,
             "initial_code_state_id": initial_code_state_id,
             "client": client or {},
+            "recruitment": normalized_recruitment,
         }
         _write_json_atomic(session_dir / "manifest.json", manifest)
         return manifest
@@ -265,6 +279,43 @@ class TraceStore:
             _write_json_atomic(session_dir / "manifest.json", manifest)
 
         return stored_result
+
+    def record_submission(
+        self,
+        session_id: str,
+        source: str,
+        check: dict[str, Any],
+        execution_id: str,
+    ) -> dict[str, Any]:
+        if not isinstance(source, str):
+            raise ValueError("source must be a string")
+        if not isinstance(check, dict) or not isinstance(check.get("passed"), bool):
+            raise ValueError("check must contain a boolean passed result")
+        _require_safe_id(execution_id, "execution_id")
+        submission_id = str(uuid.uuid4())
+        session_dir = self._session_dir(session_id)
+
+        with self._lock_for(session_id):
+            manifest = self._read_manifest(session_id)
+            source_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
+            submitted_at = utc_now()
+            submission = {
+                "schema_version": SCHEMA_VERSION,
+                "submission_id": submission_id,
+                "session_id": session_id,
+                "execution_id": execution_id,
+                "code_state_id": f"sha256:{source_hash}",
+                "submitted_at": submitted_at,
+                "passed": check["passed"],
+                "check": check,
+            }
+            _write_json_atomic(session_dir / "submissions" / f"{submission_id}.json", submission)
+            manifest["submission_count"] = int(manifest.get("submission_count", 0)) + 1
+            if submission["passed"]:
+                manifest["passed_submission_id"] = submission_id
+                manifest["passed_at"] = manifest.get("passed_at") or submitted_at
+            _write_json_atomic(session_dir / "manifest.json", manifest)
+            return submission
 
     def end_session(self, session_id: str, final_source: str) -> dict[str, Any]:
         """Mark a session complete and preserve its final source snapshot."""
