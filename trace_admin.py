@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +33,33 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _mtime(path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat().replace("+00:00", "Z")
+
+
+def _timestamp(value: Any) -> datetime:
+    if not isinstance(value, str) or not value:
+        return datetime.min.replace(tzinfo=UTC)
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=UTC)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _missing_ranges(sequences: list[int]) -> list[dict[str, int]]:
+    ranges = []
+    expected = 1
+    for sequence in sorted(set(sequences)):
+        if sequence > expected:
+            ranges.append({"start": expected, "end": sequence - 1})
+        expected = max(expected, sequence + 1)
+    return ranges
+
+
+def _event_timestamp(event: dict[str, Any], session_started_at: Any) -> datetime:
+    elapsed_ms = event.get("elapsed_ms")
+    if isinstance(elapsed_ms, (int, float)) and elapsed_ms >= 0:
+        return _timestamp(session_started_at) + timedelta(milliseconds=elapsed_ms)
+    return _timestamp(event.get("client_timestamp") or event.get("server_timestamp"))
 
 
 class TraceAdminRepository:
@@ -112,13 +139,115 @@ class TraceAdminRepository:
             submissions.append(submission)
         submissions.sort(key=lambda item: item.get("submitted_at") or "", reverse=True)
 
+        recovered_trajectory, trace_integrity = self._recovered_trajectory(
+            manifest,
+            events,
+            labels,
+            executions,
+            submissions,
+        )
+
         event_counts = Counter(event.get("type", "unknown") for event in events)
         return {
             "manifest": manifest,
             "event_type_counts": dict(sorted(event_counts.items())),
             "observations": labels,
+            "recovered_trajectory": recovered_trajectory,
+            "trace_integrity": trace_integrity,
             "executions": executions,
             "submissions": submissions,
+        }
+
+    @staticmethod
+    def _recovered_trajectory(
+        manifest: dict[str, Any],
+        events: list[dict[str, Any]],
+        observations: list[dict[str, Any]],
+        executions: list[dict[str, Any]],
+        submissions: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        events_by_sequence = {
+            event["seq"]: event for event in events if isinstance(event.get("seq"), int)
+        }
+        sequences = list(events_by_sequence)
+        last_contiguous_sequence = int(manifest.get("last_seq", 0))
+        last_contiguous_event = events_by_sequence.get(last_contiguous_sequence, {})
+        reliable_timestamp = _event_timestamp(last_contiguous_event, manifest.get("started_at"))
+
+        trajectory = []
+        for observation in observations:
+            source_event = events_by_sequence.get(observation.get("eventSeq"), {})
+            item = {
+                **observation,
+                "provenance": "raw_event",
+                "sourcePath": f"delta-observations/{observation['file']}",
+                "timestamp": _event_timestamp(source_event, manifest.get("started_at"))
+                .isoformat()
+                .replace("+00:00", "Z"),
+            }
+            trajectory.append(item)
+
+        recovered = []
+        for execution in sorted(executions, key=lambda item: _timestamp(item.get("requested_at"))):
+            requested_at = execution.get("requested_at")
+            if _timestamp(requested_at) <= reliable_timestamp:
+                continue
+            result_path = Path(execution.get("result_path", ""))
+            source_name = (execution.get("artifacts") or {}).get("source", "source.ks")
+            source_path = (result_path.parent / source_name).as_posix()
+            check = (execution.get("compiler_result") or {}).get("check") or {}
+            recovered.append(
+                {
+                    "primaryLabel": "RECOVERED_COMPILE_CHECKPOINT",
+                    "labels": ["RECOVERED_COMPILE_CHECKPOINT"],
+                    "sourceEventType": "execution.checkpoint",
+                    "eventSeq": None,
+                    "timestamp": requested_at,
+                    "requestedAt": requested_at,
+                    "executionId": execution.get("execution_id"),
+                    "codeStateId": execution.get("code_state_id"),
+                    "sourcePath": source_path,
+                    "status": execution.get("status"),
+                    "passed": check.get("passed"),
+                    "provenance": "execution_checkpoint",
+                    "note": "Exact source recovered from a compiler execution; intermediate keystrokes are unavailable.",
+                }
+            )
+        trajectory.extend(recovered)
+        trajectory.sort(key=lambda item: (_timestamp(item.get("timestamp")), item.get("eventSeq") or 0))
+        for index, item in enumerate(trajectory):
+            item["trajectoryStep"] = index
+
+        latest_activity = max(
+            [
+                *(_event_timestamp(event, manifest.get("started_at")) for event in events),
+                *(_timestamp(execution.get("requested_at")) for execution in executions),
+                *(_timestamp(submission.get("submitted_at")) for submission in submissions),
+            ],
+            default=reliable_timestamp,
+        )
+        missing_ranges = _missing_ranges(sequences)
+        tail_gap_detected = latest_activity > reliable_timestamp and bool(recovered)
+        recovery_needed = bool(missing_ranges) or tail_gap_detected
+        return trajectory, {
+            "raw_complete": not recovery_needed,
+            "recovery_needed": recovery_needed,
+            "raw_event_count": len(events),
+            "last_contiguous_sequence": last_contiguous_sequence,
+            "max_stored_sequence": max(sequences, default=0),
+            "last_reliable_timestamp": (
+                reliable_timestamp.isoformat().replace("+00:00", "Z")
+            ),
+            "latest_activity_timestamp": latest_activity.isoformat().replace("+00:00", "Z"),
+            "missing_event_ranges": missing_ranges,
+            "tail_gap_detected": tail_gap_detected,
+            "recovered_checkpoint_count": len(recovered),
+            "recovery_method": "execution_source_checkpoints" if recovered else None,
+            "limitation": (
+                "Recovered checkpoints contain exact compile-time source, but cannot reconstruct missing keystrokes."
+                if recovered
+                else None
+            ),
         }
 
     def list_files(self, session_id: str, limit: int = 500, offset: int = 0) -> dict[str, Any]:

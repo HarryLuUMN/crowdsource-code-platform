@@ -204,7 +204,7 @@ function recordRow(index, title, subtitle, meta, metaClass = "") {
 }
 
 function renderOverview() {
-  const { manifest, event_type_counts: eventTypes } = state.detail;
+  const { manifest, event_type_counts: eventTypes, trace_integrity: integrity } = state.detail;
   tabContent.append(sectionHeader("Session summary", "Identity, recruitment context, collection state, and stored data volume."));
   const grid = element("div", "key-grid");
   const recruitment = manifest.recruitment || {};
@@ -217,6 +217,8 @@ function renderOverview() {
     ["Started", formatDate(manifest.started_at)],
     ["Ended", formatDate(manifest.ended_at)],
     ["Replay steps", formatNumber(manifest.observation_count)],
+    ["Trace integrity", integrity?.recovery_needed ? "Checkpoint recovered" : "Raw event stream complete"],
+    ["Recovered checkpoints", formatNumber(integrity?.recovered_checkpoint_count)],
   ].forEach(([label, value]) => grid.append(keyValue(label, value)));
   tabContent.append(grid, sectionHeader("Captured event types", "Counts are calculated from the immutable raw event batches."));
   const cloud = element("div", "type-cloud");
@@ -254,18 +256,30 @@ async function renderTimeline() {
 }
 
 function renderSteps() {
-  const steps = state.detail.observations;
-  tabContent.append(sectionHeader("Replayable observations", "Every source-changing action is a full code snapshot; task, tutorial, and test actions are marker steps."));
+  const integrity = state.detail.trace_integrity || {};
+  const steps = state.detail.recovered_trajectory || state.detail.observations;
+  const title = integrity.recovery_needed ? "Recovered trajectory" : "Replayable observations";
+  const copy = integrity.recovery_needed
+    ? `Raw logging has gaps. ${formatNumber(integrity.recovered_checkpoint_count)} exact compile-time source checkpoints fill the missing interval; missing keystrokes are not inferred.`
+    : "Every source-changing action is a full code snapshot; task, tutorial, and test actions are marker steps.";
+  tabContent.append(sectionHeader(title, copy));
   if (!steps.length) {
     tabContent.append(element("p", "list-message", "No replay steps recorded."));
     return;
   }
   steps.forEach((step) => {
-    const row = recordRow(`S${step.step}`, step.primaryLabel, step.file, `event #${step.eventSeq}`);
-    row.addEventListener("click", () => loadFile(`delta-observations/${step.file}`));
+    const recovered = step.provenance === "execution_checkpoint";
+    const row = recordRow(
+      `S${step.trajectoryStep ?? step.step}`,
+      step.primaryLabel,
+      step.sourcePath || step.file,
+      recovered ? "recovered checkpoint" : `event #${step.eventSeq}`,
+      recovered ? "recovered" : "",
+    );
+    row.addEventListener("click", () => loadFile(step.sourcePath || `delta-observations/${step.file}`));
     tabContent.append(row);
   });
-  loadFile(`delta-observations/${steps[steps.length - 1].file}`);
+  loadFile(steps[steps.length - 1].sourcePath || `delta-observations/${steps[steps.length - 1].file}`);
 }
 
 function renderCompiles() {
