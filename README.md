@@ -12,7 +12,7 @@ python3.12 -m venv .venv
 .venv/bin/python server.py
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000), edit the example, and press **Run** or <kbd>Cmd/Ctrl</kbd> + <kbd>Enter</kbd>.
+Open [http://127.0.0.1:8000/?preview=1](http://127.0.0.1:8000/?preview=1), write a program from scratch, and press **Run** or <kbd>Cmd/Ctrl</kbd> + <kbd>Enter</kbd>.
 
 ## Trace storage
 
@@ -88,7 +88,7 @@ Railway supplies the public `PORT` automatically. The container binds to `0.0.0.
 
 ## Launch through Prolific
 
-The app accepts Prolific's `PROLIFIC_PID`, `STUDY_ID`, and `SESSION_ID` URL parameters and saves them with the trace. Set the study-specific Railway variable below so a passing submission can return the participant to Prolific:
+The app accepts Prolific's `PROLIFIC_PID`, `STUDY_ID`, and `SESSION_ID` URL parameters and saves them with the trace. When a participant follows a static link from an external survey, the editor requires their Prolific ID before it starts the trace or enables the study controls. Set the study-specific Railway variable below so a passing submission can return the participant to Prolific:
 
 ```text
 PROLIFIC_COMPLETION_URL=https://app.prolific.com/submissions/complete?cc=YOUR_CODE

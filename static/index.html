@@ -6,7 +6,7 @@
     <meta name="description" content="Write and run KnitScript in your browser." />
     <title>KnitScript Studio</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=4" />
+    <link rel="stylesheet" href="/styles.css?v=5" />
   </head>
   <body>
     <header class="topbar">
@@ -145,6 +145,28 @@
     </main>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <dialog class="participant-dialog" id="participantDialog" aria-labelledby="participantDialogTitle">
+      <form id="participantForm" method="dialog">
+        <span class="participant-kicker">Study access</span>
+        <h2 id="participantDialogTitle">Enter your Prolific ID</h2>
+        <p>Use the same participant ID you entered in the study form. This connects your programming trace to your study response.</p>
+        <label for="participantIdInput">Prolific participant ID</label>
+        <input
+          id="participantIdInput"
+          name="participant_id"
+          type="text"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          required
+          minlength="6"
+          maxlength="64"
+          pattern="[A-Za-z0-9_-]+"
+        />
+        <p class="participant-error" id="participantIdError" role="alert" aria-live="polite"></p>
+        <button class="submit-button participant-start" type="submit">Start coding</button>
+      </form>
+    </dialog>
     <dialog class="completion-dialog" id="completionDialog" aria-labelledby="completionTitle">
       <div class="completion-icon" aria-hidden="true">✓</div>
       <h2 id="completionTitle">Solution accepted</h2>
@@ -154,6 +176,6 @@
         <a class="submit-button completion-link" id="prolificCompletionLink" hidden>Return to Prolific</a>
       </div>
     </dialog>
-    <script src="/app.js?v=6" defer></script>
+    <script src="/app.js?v=7" defer></script>
   </body>
 </html>

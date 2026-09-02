@@ -6,9 +6,10 @@ const prolificRecruitment = {
   study_id: queryParameters.get("STUDY_ID") || "",
   prolific_session_id: queryParameters.get("SESSION_ID") || "",
 };
-const hasProlificParticipant = Boolean(prolificRecruitment.prolific_pid);
-const sourceStorageScope = prolificRecruitment.prolific_session_id || prolificRecruitment.prolific_pid || "direct";
-const SOURCE_STORAGE_KEY = `knitscript-studio-source:${TASK_ID}:from-scratch-v1:${sourceStorageScope}`;
+const previewMode = queryParameters.get("preview") === "1";
+let hasProlificParticipant = Boolean(prolificRecruitment.prolific_pid);
+let participantId = hasProlificParticipant ? prolificRecruitment.prolific_pid : "";
+let sourceStorageKey = "";
 const STARTER_SOURCE = "";
 
 const editor = document.querySelector("#sourceEditor");
@@ -32,6 +33,10 @@ const completionDialog = document.querySelector("#completionDialog");
 const completionMessage = document.querySelector("#completionMessage");
 const closeCompletionButton = document.querySelector("#closeCompletionButton");
 const prolificCompletionLink = document.querySelector("#prolificCompletionLink");
+const participantDialog = document.querySelector("#participantDialog");
+const participantForm = document.querySelector("#participantForm");
+const participantIdInput = document.querySelector("#participantIdInput");
+const participantIdError = document.querySelector("#participantIdError");
 const tabs = [...document.querySelectorAll(".tab")];
 const guideTabs = [...document.querySelectorAll(".guide-tab")];
 const guideViews = [...document.querySelectorAll(".guide-view")];
@@ -45,10 +50,10 @@ let telemetrySessionId = null;
 let telemetrySeq = 0;
 let telemetryFlush = Promise.resolve();
 let telemetryInFlightBatch = null;
-let sessionReady;
+let sessionReady = Promise.resolve();
+let studyStarted = false;
 const pendingEvents = [];
 const telemetryStartedAt = performance.now();
-const participantId = prolificRecruitment.prolific_pid || getPersistentId("knitscript-participant-id");
 const clientInstanceId = crypto.randomUUID();
 
 function getPersistentId(key) {
@@ -60,6 +65,7 @@ function getPersistentId(key) {
 }
 
 function recordEvent(type, payload = {}) {
+  if (!studyStarted) return;
   telemetrySeq += 1;
   pendingEvents.push({
     client_event_id: `${clientInstanceId}:${telemetrySeq}`,
@@ -164,7 +170,7 @@ function eventTypeForInput(inputType = "") {
 }
 
 function setInitialSource() {
-  editor.value = localStorage.getItem(SOURCE_STORAGE_KEY) || STARTER_SOURCE;
+  editor.value = localStorage.getItem(sourceStorageKey) || STARTER_SOURCE;
   updateEditorChrome();
 }
 
@@ -190,7 +196,7 @@ function persistSource() {
   saveState.textContent = "Saving…";
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    localStorage.setItem(SOURCE_STORAGE_KEY, editor.value);
+    localStorage.setItem(sourceStorageKey, editor.value);
     saveState.textContent = "Saved locally";
   }, 350);
 }
@@ -394,7 +400,7 @@ resetButton.addEventListener("click", () => {
   const previousLength = editor.value.length;
   editor.value = STARTER_SOURCE;
   previousSource = STARTER_SOURCE;
-  localStorage.setItem(SOURCE_STORAGE_KEY, STARTER_SOURCE);
+  localStorage.setItem(sourceStorageKey, STARTER_SOURCE);
   updateEditorChrome();
   recordEvent("file.reset", {
     previous_length: previousLength,
@@ -452,9 +458,63 @@ fetch("/api/health")
     compilerState.innerHTML = "<i></i> Compiler offline";
   });
 
-studyState.textContent = hasProlificParticipant ? "Prolific session" : "Preview mode";
-setInitialSource();
-previousSource = editor.value;
-sessionReady = initializeTelemetrySession();
-sessionReady.then(() => flushEvents());
+function setStudyControlsEnabled(enabled) {
+  editor.disabled = !enabled;
+  runButton.disabled = !enabled;
+  submitButton.disabled = !enabled;
+  resetButton.disabled = !enabled;
+}
+
+function startStudy(identityMethod) {
+  if (studyStarted) return;
+  if (!participantId) participantId = getPersistentId("knitscript-participant-id");
+  const sourceStorageScope = prolificRecruitment.prolific_session_id || participantId;
+  sourceStorageKey = `knitscript-studio-source:${TASK_ID}:from-scratch-v1:${sourceStorageScope}`;
+  studyStarted = true;
+  setStudyControlsEnabled(true);
+  studyState.textContent = hasProlificParticipant ? "Prolific session" : "Preview mode";
+  setInitialSource();
+  previousSource = editor.value;
+  sessionReady = initializeTelemetrySession();
+  sessionReady.then(() => {
+    if (identityMethod === "manual") recordEvent("participant.id_provided", { method: identityMethod });
+    return flushEvents();
+  });
+}
+
+participantForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const suppliedId = participantIdInput.value.trim();
+  if (!/^[A-Za-z0-9_-]{6,64}$/.test(suppliedId)) {
+    participantIdError.textContent = "Enter a valid Prolific participant ID.";
+    participantIdInput.focus();
+    return;
+  }
+  prolificRecruitment.source = "prolific_manual";
+  prolificRecruitment.prolific_pid = suppliedId;
+  hasProlificParticipant = true;
+  participantId = suppliedId;
+  queryParameters.set("PROLIFIC_PID", suppliedId);
+  history.replaceState(null, "", `${window.location.pathname}?${queryParameters.toString()}`);
+  participantDialog.close();
+  startStudy("manual");
+  editor.focus();
+});
+
+participantIdInput.addEventListener("input", () => {
+  participantIdError.textContent = "";
+});
+
+participantDialog.addEventListener("cancel", (event) => event.preventDefault());
+
+if (hasProlificParticipant) {
+  startStudy("url");
+} else if (previewMode) {
+  startStudy("preview");
+} else {
+  setStudyControlsEnabled(false);
+  studyState.textContent = "Participant ID required";
+  participantDialog.showModal();
+  participantIdInput.focus();
+}
 setInterval(() => void flushEvents(), 2000);

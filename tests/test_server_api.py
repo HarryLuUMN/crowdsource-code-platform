@@ -91,6 +91,19 @@ class ServerApiTests(unittest.TestCase):
         self.assertIn('const STARTER_SOURCE = "";', script)
         self.assertNotIn("TODO: cast on", script)
 
+    def test_direct_study_access_requires_a_prolific_participant_id(self) -> None:
+        html_status, html = self.get_text("/")
+        script_status, script = self.get_text("/app.js")
+
+        self.assertEqual(200, html_status)
+        self.assertEqual(200, script_status)
+        self.assertIn('id="participantDialog"', html)
+        self.assertIn('id="participantIdInput"', html)
+        self.assertIn('queryParameters.get("preview") === "1"', script)
+        self.assertIn('prolificRecruitment.source = "prolific_manual"', script)
+        self.assertIn('participantDialog.showModal()', script)
+        self.assertIn('history.replaceState', script)
+
     def test_admin_page_is_available_but_trace_api_requires_login(self) -> None:
         page_status, html = self.get_text("/admin")
         api_status, payload = self.admin_request("/api/admin/sessions")

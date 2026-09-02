@@ -10,6 +10,8 @@ https://crowdsource-code-platform-production.up.railway.app/?PROLIFIC_PID={{%PRO
 
 The task stores these identifiers in the session manifest alongside the programming trace. It does not display the participant ID in the interface.
 
+When the task is opened from an external survey without URL parameters, it requires the participant to enter their Prolific ID before the editor is enabled. Direct development previews can bypass that prompt with `?preview=1`.
+
 ## 2. Completion path
 
 In the Prolific study setup:

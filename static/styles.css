@@ -29,7 +29,7 @@ body {
   color: var(--ink);
 }
 
-button, textarea { font: inherit; }
+button, input, textarea { font: inherit; }
 
 button { color: inherit; }
 
@@ -167,6 +167,18 @@ button { color: inherit; }
 .completion-dialog p { margin: 0 auto; max-width: 320px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .completion-actions { margin-top: 24px; display: flex; justify-content: center; gap: 9px; }
 .completion-link { justify-content: center; }
+
+.participant-dialog { width: min(460px, calc(100vw - 32px)); border: 1px solid #42443a; border-radius: 15px; padding: 0; background: #1b1c18; color: var(--ink); box-shadow: 0 28px 90px rgba(0, 0, 0, 0.65); }
+.participant-dialog::backdrop { background: rgba(5, 6, 4, 0.82); backdrop-filter: blur(7px); }
+.participant-dialog form { padding: 30px; }
+.participant-kicker { display: block; margin-bottom: 9px; color: var(--accent); font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.14em; text-transform: uppercase; }
+.participant-dialog h2 { margin: 0 0 9px; font-size: 22px; }
+.participant-dialog p { margin: 0 0 22px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.participant-dialog label { display: block; margin-bottom: 8px; color: #d8d6cf; font-size: 11px; font-weight: 700; }
+.participant-dialog input { width: 100%; height: 44px; border: 1px solid #42443a; border-radius: 8px; outline: 0; padding: 0 12px; background: #141512; color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.participant-dialog input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.participant-dialog .participant-error { min-height: 18px; margin: 7px 0 8px; color: var(--error); font-size: 11px; }
+.participant-start { width: 100%; justify-content: center; }
 
 @media (max-width: 900px) {
   .workspace { height: auto; padding: 28px 16px; }
