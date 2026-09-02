@@ -11,6 +11,7 @@ let hasProlificParticipant = Boolean(prolificRecruitment.prolific_pid);
 let participantId = hasProlificParticipant ? prolificRecruitment.prolific_pid : "";
 let sourceStorageKey = "";
 const STARTER_SOURCE = "";
+const TELEMETRY_BATCH_SIZE = 25;
 
 const editor = document.querySelector("#sourceEditor");
 const lineNumbers = document.querySelector("#lineNumbers");
@@ -50,6 +51,7 @@ let telemetrySessionId = null;
 let telemetrySeq = 0;
 let telemetryFlush = Promise.resolve();
 let telemetryInFlightBatch = null;
+let telemetryEnded = false;
 let sessionReady = Promise.resolve();
 let studyStarted = false;
 const pendingEvents = [];
@@ -65,7 +67,7 @@ function getPersistentId(key) {
 }
 
 function recordEvent(type, payload = {}) {
-  if (!studyStarted) return;
+  if (!studyStarted || telemetryEnded) return;
   telemetrySeq += 1;
   pendingEvents.push({
     client_event_id: `${clientInstanceId}:${telemetrySeq}`,
@@ -106,11 +108,11 @@ async function initializeTelemetrySession() {
 }
 
 async function flushEvents() {
-  telemetryFlush = telemetryFlush.then(async () => {
+  telemetryFlush = telemetryFlush.catch(() => false).then(async () => {
     await sessionReady;
-    if (!telemetrySessionId) return;
+    if (!telemetrySessionId) return false;
     while (pendingEvents.length > 0) {
-      const events = pendingEvents.splice(0, 100);
+      const events = pendingEvents.splice(0, TELEMETRY_BATCH_SIZE);
       const batchId = crypto.randomUUID();
       telemetryInFlightBatch = { batch_id: batchId, events };
       try {
@@ -118,18 +120,60 @@ async function flushEvents() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ session_id: telemetrySessionId, batch_id: batchId, events }),
-          keepalive: true,
         });
         if (!response.ok) throw new Error("Telemetry upload failed");
+        await response.text();
       } catch (_error) {
         pendingEvents.unshift(...events);
-        return;
+        return false;
       } finally {
         telemetryInFlightBatch = null;
       }
     }
+    return true;
   });
   return telemetryFlush;
+}
+
+function eventBatchesFor(events) {
+  const batches = [];
+  for (let index = 0; index < events.length; index += TELEMETRY_BATCH_SIZE) {
+    batches.push({
+      batch_id: crypto.randomUUID(),
+      events: events.slice(index, index + TELEMETRY_BATCH_SIZE),
+    });
+  }
+  return batches;
+}
+
+function sendPendingEventsWithBeacon() {
+  if (!telemetrySessionId) return;
+  const events = [
+    ...(telemetryInFlightBatch ? telemetryInFlightBatch.events : []),
+    ...pendingEvents,
+  ];
+  eventBatchesFor(events).forEach((batch) => {
+    const payload = JSON.stringify({ session_id: telemetrySessionId, ...batch });
+    navigator.sendBeacon("/api/events", new Blob([payload], { type: "application/json" }));
+  });
+}
+
+async function finishTelemetrySession() {
+  if (!telemetrySessionId || telemetryEnded) return;
+  recordEvent("session.ended", { source_length: editor.value.length });
+  await flushEvents();
+  try {
+    const response = await fetch("/api/sessions/end", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: telemetrySessionId, final_source: editor.value }),
+    });
+    if (!response.ok) return;
+    await response.text();
+  } catch (_error) {
+    return;
+  }
+  telemetryEnded = true;
 }
 
 function describeEdit(before, after, inputType = "") {
@@ -354,9 +398,9 @@ async function executeSource(mode, trigger = "button") {
       metrics: result.metrics || null,
       check: result.check || null,
     });
+    await flushEvents();
     if (isSubmission && result.submission?.passed) showCompletion(result);
     if (isSubmission && result.submission && !result.submission.passed) showToast("Not accepted yet — review the failed tests");
-    void flushEvents();
   } catch (error) {
     showResult({ ok: false, error: { type: "ConnectionError", message: "Could not reach the compiler backend." } });
     recordEvent(`${mode}.connection_error`);
@@ -419,6 +463,15 @@ tabs.forEach((tab) => tab.addEventListener("click", () => selectTab(tab.dataset.
 guideTabs.forEach((tab) => tab.addEventListener("click", () => selectGuideTab(tab.dataset.guideTab, true)));
 documentationLink.addEventListener("click", () => recordEvent("guide.documentation_opened"));
 closeCompletionButton.addEventListener("click", () => completionDialog.close());
+prolificCompletionLink.addEventListener("click", async (event) => {
+  const completionUrl = prolificCompletionLink.href;
+  if (!completionUrl) return;
+  event.preventDefault();
+  prolificCompletionLink.setAttribute("aria-disabled", "true");
+  prolificCompletionLink.textContent = "Saving trace…";
+  await finishTelemetrySession();
+  window.location.assign(completionUrl);
+});
 
 document.addEventListener("visibilitychange", () => {
   recordEvent(document.hidden ? "page.hidden" : "page.visible");
@@ -426,28 +479,17 @@ document.addEventListener("visibilitychange", () => {
 });
 
 window.addEventListener("pagehide", () => {
-  if (!telemetrySessionId) return;
+  if (!telemetrySessionId || telemetryEnded) return;
   recordEvent("session.ended", { source_length: editor.value.length });
-  const events = pendingEvents.splice(0);
-  const eventBatches = telemetryInFlightBatch ? [telemetryInFlightBatch] : [];
-  for (let index = 0; index < events.length; index += 100) {
-    eventBatches.push({ batch_id: crypto.randomUUID(), events: events.slice(index, index + 100) });
-  }
+  sendPendingEventsWithBeacon();
   const payload = JSON.stringify({
     session_id: telemetrySessionId,
-    event_batches: eventBatches,
     final_source: editor.value,
   });
-  const sent = navigator.sendBeacon("/api/sessions/end", new Blob([payload], { type: "application/json" }));
-  if (!sent) {
-    void fetch("/api/sessions/end", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: payload,
-      keepalive: true,
-    });
-  }
+  navigator.sendBeacon("/api/sessions/end", new Blob([payload], { type: "application/json" }));
 });
+
+window.addEventListener("pageshow", () => void flushEvents());
 
 fetch("/api/health")
   .then((response) => {
