@@ -56,6 +56,16 @@ TRACE_STORAGE_DIR=/path/to/persistent/traces .venv/bin/python server.py
 
 This filesystem format is intentionally object-storage friendly: each event batch and execution is immutable. On serverless hosting, use a persistent volume or replace the filesystem writes with S3/R2 object writes; a function's temporary disk alone is not durable.
 
+## Private trace dashboard
+
+Set a strong administrator key and open `/admin` to browse stored sessions without downloading the volume:
+
+```bash
+TRACE_ADMIN_TOKEN='a-long-random-secret' .venv/bin/python server.py
+```
+
+The dashboard shows Prolific identifiers, session status, event totals, the ordered browser-event timeline, replayable source snapshots, every compile result and artifact, submissions, and raw stored files. Data APIs require a signed, HTTP-only administrator session cookie. File previews are restricted to the selected session directory and capped at 256 KB. The key must be at least 20 characters and should be configured as a private Railway service variable.
+
 ## Test
 
 ```bash
@@ -71,6 +81,7 @@ Required service settings:
 ```text
 Volume mount path: /data
 Health check: /api/health
+TRACE_ADMIN_TOKEN: a strong random secret with at least 20 characters
 ```
 
 Railway supplies the public `PORT` automatically. The container binds to `0.0.0.0` so the editor, compiler API, and trace store are available from the same origin.

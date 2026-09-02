@@ -4,11 +4,22 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from trace_store import TraceStore
 
 
 class TraceStoreTests(unittest.TestCase):
+    def test_materialization_skips_rebuilding_an_up_to_date_trace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = TraceStore(Path(temp_dir))
+            session = store.create_session("participant-test", "playground", initial_source="")
+
+            with patch.object(TraceStore, "_stored_events", side_effect=AssertionError("should not read events")):
+                manifest = store.materialize_observations(session["session_id"])
+
+            self.assertEqual(0, manifest["observation_count"])
+
     def test_session_preserves_prolific_recruitment_identifiers(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = TraceStore(Path(temp_dir))

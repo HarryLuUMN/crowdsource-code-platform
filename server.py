@@ -3,19 +3,24 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 import os
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from http import HTTPStatus
+from http.cookies import CookieError, SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from answer_checker import TASK_ID, check_stockinette_answer
+from trace_admin import TraceAdminRepository
 from trace_store import TraceStore, utc_now
 
 ROOT = Path(__file__).resolve().parent
@@ -25,6 +30,8 @@ MAX_REQUEST_BYTES = 1024 * 1024
 MAX_SOURCE_CHARS = 100_000
 COMPILE_TIMEOUT_SECONDS = 25
 MAX_CONCURRENT_COMPILES = 2
+ADMIN_COOKIE_NAME = "knitscript_admin"
+ADMIN_SESSION_SECONDS = 12 * 60 * 60
 TRACE_STORAGE_DIR = Path(os.environ.get("TRACE_STORAGE_DIR", ROOT / "data" / "traces"))
 _compile_slots = threading.BoundedSemaphore(MAX_CONCURRENT_COMPILES)
 _trace_store: TraceStore | None = None
@@ -37,6 +44,37 @@ def get_trace_store() -> TraceStore:
         if _trace_store is None:
             _trace_store = TraceStore(TRACE_STORAGE_DIR)
         return _trace_store
+
+
+def get_admin_repository() -> TraceAdminRepository:
+    return TraceAdminRepository(get_trace_store())
+
+
+def _admin_token() -> str | None:
+    token = os.environ.get("TRACE_ADMIN_TOKEN", "").strip()
+    return token if len(token) >= 20 else None
+
+
+def _admin_cookie_value(token: str, issued_at: int | None = None) -> str:
+    timestamp = issued_at if issued_at is not None else int(time.time())
+    message = f"admin:{timestamp}".encode("utf-8")
+    signature = hmac.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
+    return f"{timestamp}.{signature}"
+
+
+def _valid_admin_cookie(cookie_value: str | None, token: str) -> bool:
+    if not cookie_value or "." not in cookie_value:
+        return False
+    timestamp_text, signature = cookie_value.split(".", 1)
+    try:
+        timestamp = int(timestamp_text)
+    except ValueError:
+        return False
+    age = int(time.time()) - timestamp
+    if age < -60 or age > ADMIN_SESSION_SECONDS:
+        return False
+    expected = _admin_cookie_value(token, timestamp).split(".", 1)[1]
+    return hmac.compare_digest(signature, expected)
 
 
 def compile_source(source: str) -> tuple[int, dict[str, Any]]:
@@ -128,14 +166,76 @@ class KnitScriptHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
 
-    def _send_json(self, status: int, payload: dict[str, Any]) -> None:
+    def end_headers(self) -> None:
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+            "connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+        )
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        super().end_headers()
+
+    def _send_json(
+        self,
+        status: int,
+        payload: dict[str, Any],
+        headers: dict[str, str] | None = None,
+    ) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
+
+    def _cookie_value(self) -> str | None:
+        cookie = SimpleCookie()
+        try:
+            cookie.load(self.headers.get("Cookie", ""))
+        except CookieError:
+            return None
+        morsel = cookie.get(ADMIN_COOKIE_NAME)
+        return morsel.value if morsel else None
+
+    def _require_admin(self) -> bool:
+        token = _admin_token()
+        if token is None:
+            self._send_json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {"ok": False, "error": {"message": "Admin dashboard is not configured."}},
+            )
+            return False
+        if not _valid_admin_cookie(self._cookie_value(), token):
+            self._send_json(
+                HTTPStatus.UNAUTHORIZED,
+                {"ok": False, "error": {"message": "Admin login required."}},
+            )
+            return False
+        return True
+
+    def _admin_cookie_header(self, value: str, max_age: int) -> str:
+        host = self.headers.get("Host", "").split(":", 1)[0].lower()
+        forwarded_https = self.headers.get("X-Forwarded-Proto", "").split(",", 1)[0].strip() == "https"
+        secure = bool(os.environ.get("RAILWAY_ENVIRONMENT")) or forwarded_https or host not in {
+            "127.0.0.1",
+            "localhost",
+            "::1",
+        }
+        attributes = [
+            f"{ADMIN_COOKIE_NAME}={value}",
+            "Path=/",
+            f"Max-Age={max_age}",
+            "HttpOnly",
+            "SameSite=Strict",
+        ]
+        if secure:
+            attributes.append("Secure")
+        return "; ".join(attributes)
 
     def _read_json_request(self) -> dict[str, Any] | None:
         try:
@@ -156,25 +256,126 @@ class KnitScriptHandler(SimpleHTTPRequestHandler):
         return request
 
     def do_GET(self) -> None:
-        if self.path == "/api/health":
-            self._send_json(HTTPStatus.OK, {"ok": True, "compiler": "knit-script", "version": "0.4.0"})
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path == "/api/health":
+            self._send_json(HTTPStatus.OK, {"ok": True, "compiler": "knit-script", "version": "0.5.0"})
             return
-        if self.path == "/api/study-config":
+        if path == "/api/study-config":
             self._send_json(HTTPStatus.OK, {"ok": True, **build_study_config()})
+            return
+        if path == "/admin" or path == "/admin/":
+            self.path = "/admin.html"
+            super().do_GET()
+            return
+        if path.startswith("/api/admin/"):
+            if not self._require_admin():
+                return
+            try:
+                repository = get_admin_repository()
+                if path == "/api/admin/sessions":
+                    self._send_json(HTTPStatus.OK, {"ok": True, **repository.list_sessions()})
+                    return
+                prefix = "/api/admin/sessions/"
+                if not path.startswith(prefix):
+                    raise KeyError("Unknown admin endpoint")
+                parts = path[len(prefix) :].split("/")
+                session_id = parts[0]
+                if len(parts) == 1:
+                    self._send_json(HTTPStatus.OK, {"ok": True, **repository.get_session(session_id)})
+                    return
+                if len(parts) == 2 and parts[1] == "events":
+                    query = parse_qs(parsed.query)
+                    limit_text = query.get("limit", ["2000"])[0]
+                    try:
+                        limit = int(limit_text)
+                    except ValueError as error:
+                        raise ValueError("limit must be an integer") from error
+                    events = repository.get_events(session_id, limit)
+                    self._send_json(HTTPStatus.OK, {"ok": True, "events": events, "returned": len(events)})
+                    return
+                if len(parts) == 2 and parts[1] == "files":
+                    query = parse_qs(parsed.query)
+                    try:
+                        limit = int(query.get("limit", ["500"])[0])
+                        offset = int(query.get("offset", ["0"])[0])
+                    except ValueError as error:
+                        raise ValueError("limit and offset must be integers") from error
+                    self._send_json(
+                        HTTPStatus.OK,
+                        {"ok": True, **repository.list_files(session_id, limit=limit, offset=offset)},
+                    )
+                    return
+                if len(parts) == 2 and parts[1] == "file":
+                    relative_paths = parse_qs(parsed.query).get("path", [])
+                    if len(relative_paths) != 1:
+                        raise ValueError("A file path is required")
+                    self._send_json(HTTPStatus.OK, {"ok": True, **repository.read_file(session_id, relative_paths[0])})
+                    return
+                raise KeyError("Unknown admin endpoint")
+            except ValueError as error:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": {"message": str(error)}})
+            except KeyError as error:
+                self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": str(error)}})
+            except OSError as error:
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"ok": False, "error": {"type": "StorageError", "message": str(error)}},
+                )
             return
         super().do_GET()
 
     def do_POST(self) -> None:
-        supported_paths = {"/api/run", "/api/submit", "/api/sessions", "/api/events", "/api/sessions/end"}
-        if self.path not in supported_paths:
+        parsed = urlparse(self.path)
+        path = parsed.path
+        supported_paths = {
+            "/api/run",
+            "/api/submit",
+            "/api/sessions",
+            "/api/events",
+            "/api/sessions/end",
+            "/api/admin/login",
+            "/api/admin/logout",
+        }
+        if path not in supported_paths:
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "Not found"}})
+            return
+        if path == "/api/admin/logout":
+            self._send_json(
+                HTTPStatus.OK,
+                {"ok": True},
+                {"Set-Cookie": self._admin_cookie_header("", 0)},
+            )
             return
         request = self._read_json_request()
         if request is None:
             return
 
         try:
-            if self.path == "/api/sessions":
+            if path == "/api/admin/login":
+                configured_token = _admin_token()
+                supplied_token = request.get("token")
+                if configured_token is None:
+                    self._send_json(
+                        HTTPStatus.SERVICE_UNAVAILABLE,
+                        {"ok": False, "error": {"message": "Admin dashboard is not configured."}},
+                    )
+                    return
+                if not isinstance(supplied_token, str) or not hmac.compare_digest(supplied_token, configured_token):
+                    self._send_json(
+                        HTTPStatus.UNAUTHORIZED,
+                        {"ok": False, "error": {"message": "Invalid admin key."}},
+                    )
+                    return
+                cookie_value = _admin_cookie_value(configured_token)
+                self._send_json(
+                    HTTPStatus.OK,
+                    {"ok": True},
+                    {"Set-Cookie": self._admin_cookie_header(cookie_value, ADMIN_SESSION_SECONDS)},
+                )
+                return
+
+            if path == "/api/sessions":
                 manifest = get_trace_store().create_session(
                     participant_id=request.get("participant_id"),
                     task_id=request.get("task_id", "playground"),
@@ -185,7 +386,7 @@ class KnitScriptHandler(SimpleHTTPRequestHandler):
                 self._send_json(HTTPStatus.CREATED, {"ok": True, "session": manifest})
                 return
 
-            if self.path == "/api/events":
+            if path == "/api/events":
                 batch = get_trace_store().append_event_batch(
                     session_id=request.get("session_id"),
                     batch_id=request.get("batch_id"),
@@ -194,7 +395,7 @@ class KnitScriptHandler(SimpleHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, {"ok": True, **batch})
                 return
 
-            if self.path == "/api/sessions/end":
+            if path == "/api/sessions/end":
                 event_batches = request.get("event_batches")
                 if event_batches is not None:
                     if not isinstance(event_batches, list):
@@ -221,7 +422,7 @@ class KnitScriptHandler(SimpleHTTPRequestHandler):
 
             source = request.get("source")
             session_id = request.get("session_id")
-            is_submission = self.path == "/api/submit"
+            is_submission = path == "/api/submit"
             if is_submission and not isinstance(session_id, str):
                 self._send_json(
                     HTTPStatus.BAD_REQUEST,

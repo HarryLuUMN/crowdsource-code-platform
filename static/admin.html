@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="description" content="Private programming trace dashboard." />
+    <title>Trace Dashboard</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/admin.css?v=1" />
+  </head>
+  <body>
+    <main class="login-shell" id="loginView" hidden>
+      <section class="login-card" aria-labelledby="loginTitle">
+        <span class="eyebrow">Private research workspace</span>
+        <h1 id="loginTitle">Programming Trace Dashboard</h1>
+        <p>Enter the administrator key to inspect sessions, code snapshots, compiler artifacts, and submissions.</p>
+        <form id="loginForm">
+          <label for="adminToken">Administrator key</label>
+          <div class="login-row">
+            <input id="adminToken" name="token" type="password" autocomplete="current-password" required />
+            <button class="primary-button" type="submit">Open dashboard</button>
+          </div>
+          <p class="form-message" id="loginMessage" role="alert"></p>
+        </form>
+      </section>
+    </main>
+
+    <div class="dashboard" id="dashboardView" hidden>
+      <header class="dashboard-header">
+        <div>
+          <span class="eyebrow">Private research workspace</span>
+          <h1>Programming Trace Dashboard</h1>
+        </div>
+        <div class="header-actions">
+          <span class="sync-state" id="syncState">Stored on Railway volume</span>
+          <button class="secondary-button" id="refreshButton" type="button">Refresh</button>
+          <button class="secondary-button" id="logoutButton" type="button">Log out</button>
+        </div>
+      </header>
+
+      <section class="metric-grid" aria-label="Trace summary">
+        <article><span>Sessions</span><strong id="sessionMetric">0</strong></article>
+        <article><span>Active</span><strong id="activeMetric">0</strong></article>
+        <article><span>Passed</span><strong id="passedMetric">0</strong></article>
+        <article><span>Events</span><strong id="eventMetric">0</strong></article>
+        <article><span>Compiles</span><strong id="compileMetric">0</strong></article>
+      </section>
+
+      <div class="dashboard-grid">
+        <aside class="session-panel">
+          <div class="panel-heading">
+            <div>
+              <span class="eyebrow">Participants</span>
+              <h2>Sessions</h2>
+            </div>
+            <span class="result-count" id="resultCount">0 records</span>
+          </div>
+          <div class="filters">
+            <label class="search-field">
+              <span>Search</span>
+              <input id="sessionSearch" type="search" placeholder="Participant, Prolific ID, session…" />
+            </label>
+            <label class="status-field">
+              <span>Status</span>
+              <select id="statusFilter">
+                <option value="all">All</option>
+                <option value="passed">Passed</option>
+                <option value="active">Active</option>
+                <option value="completed">Completed</option>
+              </select>
+            </label>
+          </div>
+          <div class="session-list" id="sessionList" aria-live="polite"></div>
+        </aside>
+
+        <section class="detail-panel">
+          <div class="empty-detail" id="emptyDetail">
+            <div class="empty-mark" aria-hidden="true">⌁</div>
+            <h2>Select a session</h2>
+            <p>Choose a participant trace to inspect its complete programming history.</p>
+          </div>
+
+          <div class="detail-view" id="detailView" hidden>
+            <div class="detail-header">
+              <div>
+                <div class="detail-title-row">
+                  <h2 id="detailTitle">Session</h2>
+                  <span class="status-badge" id="detailStatus"></span>
+                </div>
+                <p id="detailSubtitle"></p>
+              </div>
+              <button class="secondary-button" id="copySessionButton" type="button">Copy session ID</button>
+            </div>
+            <nav class="detail-tabs" aria-label="Session data">
+              <button class="active" data-tab="overview" type="button">Overview</button>
+              <button data-tab="timeline" type="button">Timeline</button>
+              <button data-tab="steps" type="button">Replay steps</button>
+              <button data-tab="compiles" type="button">Compiles</button>
+              <button data-tab="submissions" type="button">Submissions</button>
+              <button data-tab="files" type="button">Raw files</button>
+            </nav>
+            <div class="detail-content">
+              <div class="record-list" id="tabContent"></div>
+              <aside class="inspector">
+                <div class="inspector-heading">
+                  <span id="inspectorTitle">Session manifest</span>
+                  <span id="inspectorMeta"></span>
+                </div>
+                <pre id="inspectorContent"></pre>
+              </aside>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="/admin.js?v=1" defer></script>
+  </body>
+</html>

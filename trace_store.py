@@ -553,3 +553,20 @@ class TraceStore:
             manifest["final_code_state_id"] = f"sha256:{source_hash}"
             _write_json_atomic(session_dir / "manifest.json", manifest)
             return manifest
+
+    def materialize_observations(self, session_id: str) -> dict[str, Any]:
+        """Ensure a session has the current replayable observation view."""
+        with self._lock_for(session_id):
+            session_dir = self._session_dir(session_id)
+            manifest = self._read_manifest(session_id)
+            labels_path = session_dir / "delta-observations" / "step_labels.jsonl"
+            if (
+                manifest.get("observation_format") == "delta-observations-v1"
+                and manifest.get("observation_last_seq") == manifest.get("last_seq")
+                and labels_path.is_file()
+            ):
+                return manifest
+            events = self._stored_events(session_dir)
+            self._materialize_delta_observations(session_dir, manifest, events)
+            _write_json_atomic(session_dir / "manifest.json", manifest)
+            return manifest
